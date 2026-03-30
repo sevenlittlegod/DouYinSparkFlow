@@ -28,11 +28,11 @@
 
 ### 特性
 
-- [x] 多用户,同时批量支持多个账户
-- [x] 多目标,一个账户支持多个续火花目标
-- [x] 一言支持,更丰富的消息文本
+- [X] 多用户,同时批量支持多个账户
+- [X] 多目标,一个账户支持多个续火花目标
+- [X] 一言支持,更丰富的消息文本
 
-使用`PlayWright`以及`chrome-headless-shell`自动化操作[抖音创作者中心](https://creator.douyin.com/)，进行定时发送抖音消息来续火花
+使用 `PlayWright`以及 `chrome-headless-shell`自动化操作[抖音创作者中心](https://creator.douyin.com/)，进行定时发送抖音消息来续火花
 
 ## 🚀 使用方法
 
@@ -45,7 +45,7 @@ cp usersData.example.json usersData.json
 
 ### 2. 运行main.py
 
-首次运行`python main.py`时，会自动下载需要的测试浏览器，默认从Mozilla的镜像站下载，需要保证网络通畅。
+首次运行 `python main.py`时，会自动下载需要的测试浏览器，默认从Mozilla的镜像站下载，需要保证网络通畅。
 
 ![main.py运行截图](docs/images/屏幕截图%202026-02-14%20223607.png)
 
@@ -57,32 +57,32 @@ cp usersData.example.json usersData.json
 
 你可以选择更改config.json中的配置，目前proxyAddress的代理设置还没有实现。其他项目解释如下：
 
-|名称|作用解释|期望值|
-|-----|-----|-----|
-|multiTask|是否启用多任务，登录多个账户后生效，启用后同时操作多个账户的任务加快执行速度|`true` `false`|
-|taskCount|最大同时操作的账户数目，需要先启用multiTask|int，默认`5`|
-|messageTemplate|发送消息的模板，可以从抖音聊天框编辑好后直接复制过来，这样可以拿到简单表情的代码，例如`[盖瑞]`|使用`[API]`引用每日一言内容 默认值为： `[盖瑞]今日火花[加一]\n—— [右边] 每日一言 [左边] ——\n[API]`|
-|hitokotoTypes|每日一言消息允许的类型|可以留空使用所有类型`[]`,全部可选类型的列表为：`["动画","漫画","游戏","文学","原创","来自网络","影视","诗词","哲学","抖机灵","其他"]`|
+| 名称            | 作用解释                                                                                          | 期望值                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| multiTask       | 是否启用多任务，登录多个账户后生效，启用后同时操作多个账户的任务加快执行速度                      | `true` `false`                                                                                                                         |
+| taskCount       | 最大同时操作的账户数目，需要先启用multiTask                                                       | int，默认 `5`                                                                                                                            |
+| messageTemplate | 发送消息的模板，可以从抖音聊天框编辑好后直接复制过来，这样可以拿到简单表情的代码，例如 `[盖瑞]` | 使用 `[API]`引用每日一言内容 默认值为： `[盖瑞]今日火花[加一]\n—— [右边] 每日一言 [左边] ——\n[API]`                                |
+| hitokotoTypes   | 每日一言消息允许的类型                                                                            | 可以留空使用所有类型 `[]`,全部可选类型的列表为：`["动画","漫画","游戏","文学","原创","来自网络","影视","诗词","哲学","抖机灵","其他"]` |
 
 ### 5. 测试运行
 
-再次运行main.py之后选择`3.本地运行任务`,查看是否能够正常执行任务
+再次运行main.py之后选择 `3.本地运行任务`,查看是否能够正常执行任务
 
 ### 6. Github Acion部署
 
-项目可以部署到Github Action每日定时触发，在测试完毕后，你需要将本地代码推送到自己的Github仓库，你也可以选择直接克隆本仓库后续将config.json同步即可（如果你更改了设置的话）。本地通过usersData.json存储已经登录的账户凭证，为了防止信息泄露，Action不能像本地那样从明文读取这个配置，也不要将这个文件上传到Github，正确做法是将内容存放到`secrets`中
+项目可以部署到Github Action每日定时触发，在测试完毕后，你需要将本地代码推送到自己的Github仓库，你也可以选择直接克隆本仓库后续将config.json同步即可（如果你更改了设置的话）。本地通过usersData.json存储已经登录的账户凭证，为了防止信息泄露，Action不能像本地那样从明文读取这个配置，也不要将这个文件上传到Github，正确做法是将内容存放到 `secrets`中
 
-> 方法: 在你的Github仓库下操作，选择settings->Environments，在下面新建一个`user-data`环境，继续在这个`user-data`环境的Environment secrets添加名为`USER_DATA`的项目
+> 方法: 在你的Github仓库下操作，选择settings->Environments，在下面新建一个 `user-data`环境，继续在这个 `user-data`环境的Environment secrets添加名为 `USER_DATA`的项目
 
-![创建`user-data`环境图](docs/images/屏幕截图%202026-02-14%20224915.png)
+![创建 user-data</code>环境图](docs/images/屏幕截图%202026-02-14%20224915.png)
 
-关于这个配置的内容可以再次运行main.py,选择`2. 获取Github Action配置`将对应输出内容填入`USER_DATA`的值即可
+关于这个配置的内容可以再次运行main.py,选择 `2. 获取Github Action配置`将对应输出内容填入 `USER_DATA`的值即可
 
 ![填写配置内容图](docs/images/屏幕截图%202026-02-14%20224951.png)
 
 ### 7. （可选）手动触发Action进行测试
 
-仓库的工作流中添加了`workflow_dispatch`以便允许进行手动触发，在初次配置完成后可以通过手动触发Action来进行验证。
+仓库的工作流中添加了 `workflow_dispatch`以便允许进行手动触发，在初次配置完成后可以通过手动触发Action来进行验证。
 
 ![手动测试](docs/images/屏幕截图%202026-02-14%20224614.png)
 
@@ -90,33 +90,35 @@ cp usersData.example.json usersData.json
 
 1. 首次**克隆仓库**后启用Action
 
-    **解答：**
+   **解答：**
 
-    克隆后Github Action 默认在新仓库中是关闭的。你需要在克隆仓库后，手动进入你的 Github 仓库页面，依次点击 `Actions` 选项卡，首次进入会看到“启用工作流”或“Enable workflows”按钮，点击即可激活仓库中的 Action 工作流。
+   克隆后Github Action 默认在新仓库中是关闭的。你需要在克隆仓库后，手动进入你的 Github 仓库页面，依次点击 `Actions` 选项卡，首次进入会看到“启用工作流”或“Enable workflows”按钮，点击即可激活仓库中的 Action 工作流。
 
-    启用后，工作流会根据 `.github/workflows` 目录下的配置自动运行。你可以通过手动触发（workflow_dispatch）或等待定时任务自动执行。
+   启用后，工作流会根据 `.github/workflows` 目录下的配置自动运行。你可以通过手动触发（workflow_dispatch）或等待定时任务自动执行。
 
-    > 注意：首次启用后建议手动运行一次，确保配置无误。
-
+   > 注意：首次启用后建议手动运行一次，确保配置无误。
+   >
 2. 运行一段时间后Github提示仓库太久没有新活动，定时Action被禁用
 
-    > 通常提示：Scheduled workflows disabled
-To reduce unnecessary workflow runs, scheduled workflows have been disabled in this repository because it has been more than 60 days since the last commit.
+   > 通常提示：Scheduled workflows disabled
+   > To reduce unnecessary workflow runs, scheduled workflows have been disabled in this repository because it has been more than 60 days since the last commit.
+   >
 
-    ![Scheduled workflows disabled
-To reduce unnecessary workflow runs, scheduled workflows have been disabled in this repository because it has been more than 60 days since the last commit.](docs/images/image.png)
+   ![Scheduled workflows disabled
+   To reduce unnecessary workflow runs, scheduled workflows have been disabled in this repository because it has been more than 60 days since the last commit.](docs/images/image.png)
 
-    **解答：**
+   **解答：**
 
-    这是 Github 的自动保护机制：如果仓库 60 天内没有任何提交或活动，所有定时（schedule）类型的 Action 会被自动禁用，防止资源浪费。
+   这是 Github 的自动保护机制：如果仓库 60 天内没有任何提交或活动，所有定时（schedule）类型的 Action 会被自动禁用，防止资源浪费。
 
-    遇到这种情况，只需在仓库内进行一次代码提交（如修改 README 或随便提交一个空白更改），然后重新进入 Actions 页面，点击提示条上的“Enable workflow”或“启用工作流”按钮，即可恢复定时任务。
+   遇到这种情况，只需在仓库内进行一次代码提交（如修改 README 或随便提交一个空白更改），然后重新进入 Actions 页面，点击提示条上的“Enable workflow”或“启用工作流”按钮，即可恢复定时任务。
 
-    恢复后，定时 Action 会重新按照 workflow 文件的 schedule 设定自动运行。
+   恢复后，定时 Action 会重新按照 workflow 文件的 schedule 设定自动运行。
 
-    建议：如果你长期需要定时任务，定期（如每月）做一次无关紧要的提交，防止被自动禁用。
+   建议：如果你长期需要定时任务，定期（如每月）做一次无关紧要的提交，防止被自动禁用。
 
-    > 补充，我在仓库中尝试引入了`liskin/gh-workflow-keepalive`，理论上在此之后复刻仓库的或者进行同步后的仓库不需要再手动保活，具体详见action的`workflow-keepalive` Job
+   > 补充，我在仓库中尝试引入了 `liskin/gh-workflow-keepalive`，理论上在此之后复刻仓库的或者进行同步后的仓库不需要再手动保活，具体详见action的 `workflow-keepalive` Job
+   >
 
 ## ⚠️ 免责声明
 
@@ -129,3 +131,7 @@ To reduce unnecessary workflow runs, scheduled workflows have been disabled in t
 ## 📄 开源协议
 
 本项目基于 MIT 协议开源，你可以自由使用、修改和分发本项目代码，详见 [LICENSE](LICENSE) 文件。
+
+## 由于github每两个月停止一次workflow而开展的上传
+
+### 第一个三个月
