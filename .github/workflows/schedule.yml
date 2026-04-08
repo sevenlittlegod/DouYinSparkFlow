@@ -25,15 +25,7 @@ jobs:
       run: playwright install chromium --with-deps --only-shell
     - name: Export Github Environment Variables and Secrets to JSON
       env:
-        PROXY_ADDRESS: ${{ vars.PROXY_ADDRESS }}
-        MESSAGE_TEMPLATE: ${{ vars.MESSAGE_TEMPLATE }}
-        HITOKOTO_TYPES: ${{ vars.HITOKOTO_TYPES }}
-        MATCH_MODE: ${{ vars.MATCH_MODE }}
-        BROWSER_TIMEOUT: ${{ vars.BROWSER_TIMEOUT }}
-        FRIEND_LIST_WAIT_TIME: ${{ vars.FRIEND_LIST_WAIT_TIME }}
-        TASK_RETRY_TIMES: ${{ vars.TASK_RETRY_TIMES }}
-        LOG_LEVEL: ${{ vars.LOG_LEVEL }}
-        TASKS: ${{ vars.TASKS }}
+        VARS_JSON: ${{ toJson(vars) }}
         SECRETS_JSON: ${{ toJson(secrets) }}
       run: python utils/export_github_env.py
     - name: Run DouYin Spark Flow
