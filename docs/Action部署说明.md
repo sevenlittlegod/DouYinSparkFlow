@@ -15,7 +15,17 @@
 
 > 项目有用别忘了点Star支持开发者
 
-## 2. 创建 Environment（环境）
+## 2. 启用workflow与action
+
+首次fork后需要手动启用`workflow`和对应`action`
+
+在自己fork后的仓库上方点击`Actions`按照下方图示启用工作流
+
+![启用workflow](images/启用workflow.png)
+
+![启用action](images/启用action.png)
+
+## 3. 创建 Environment（环境）
 
 这一步在你 Fork 后的仓库中创建名为 `user-data` 的 Environment（环境）。
 
@@ -25,7 +35,7 @@
 
 ![创建`user-data`环境图](images/屏幕截图%202026-02-14%20224915.png)
 
-## 3. 配置 Secrets 和 Variables
+## 4. 配置 Secrets 和 Variables
 
 在你刚创建的 `user-data` Environment 中，分别配置 Variables 和 Secrets。
 
@@ -43,7 +53,7 @@
 
 ![配置生成器](images/配置生成器.png)
 
-## 4. 修改执行时间（可选）
+## 5. 修改执行时间（可选）
 
 如需调整自动执行时间，编辑仓库文件 `.github/workflows/schedule.yml`，找到下方配置：
 
@@ -84,11 +94,9 @@ Cron 基础语法（5 段）：
 >
 > GitHub Actions 的默认时区是 UTC。我需要每天在北京时间 XXX 自动触发工作流，请换算后给出 cron 表达式。除 `cron: "..."` 这一行外，不需要输出其他内容。
 
-## 5. 手动触发测试（可选）
+## 6. 手动触发测试（可选）
 
-> 建议执行此步骤，可以验证配置是否达到预期，此外首次fork后也需要手动触发才会启用工作流具体如下：
->
-> 克隆后Github Action 默认在新仓库中是关闭的。你需要在克隆仓库后，手动进入你的 Github 仓库页面，依次点击 `Actions` 选项卡，首次进入会看到“启用工作流”或“Enable workflows”按钮，点击即可激活仓库中的 Action 工作流。
+> 建议执行此步骤，可以验证配置是否达到预期，此外首次fork后也需要手动触发后续才会自动执行
 
 仓库的工作流中添加了`workflow_dispatch`以便允许进行手动触发，在初次配置完成后可以通过手动触发Action来进行验证，操作方式如下图所示：
 
