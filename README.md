@@ -6,7 +6,7 @@
 ![Playwright](https://img.shields.io/badge/Playwright-%E2%9C%94-green?logo=playwright)
 ![chrome-headless-shell](https://img.shields.io/badge/chrome--headless--shell-%E2%9C%94-brightgreen?logo=googlechrome)
 
-> `dev`分支迁移到`https://www.douyin.com/chat` 加载更稳定，支持通过备注/昵称/抖音号等多种方式智能匹配。由于`https://www.douyin.com/chat`没经过长期测试，该分支目前暂不合并。有能力的可以研究一下
+> `dev`分支迁移到 `https://www.douyin.com/chat` 加载更稳定，支持通过备注/昵称/抖音号等多种方式智能匹配。由于 `https://www.douyin.com/chat`没经过长期测试，该分支目前暂不合并。有能力的可以研究一下
 
 ## 贡献者
 
@@ -24,14 +24,14 @@
 
 ### 特性/优势
 
-- [x] 在线可视化配置工具，新手也能入门操作
-- [x] Fork即用，无需克隆代码，配置运行环境
-- [x] 多用户,同时批量支持多个账户
-- [x] 多目标,一个账户支持多个续火花目标
-- [x] 支持按照昵称和抖音号两种方式查找好友目标
-- [x] 一言支持,更丰富的消息文本
+- [X] 在线可视化配置工具，新手也能入门操作
+- [X] Fork即用，无需克隆代码，配置运行环境
+- [X] 多用户,同时批量支持多个账户
+- [X] 多目标,一个账户支持多个续火花目标
+- [X] 支持按照昵称和抖音号两种方式查找好友目标
+- [X] 一言支持,更丰富的消息文本
 
-使用`PlayWright`以及`chrome-headless-shell`自动化操作[抖音创作者中心](https://creator.douyin.com/)，进行定时发送抖音消息来续火花
+使用 `PlayWright`以及 `chrome-headless-shell`自动化操作[抖音创作者中心](https://creator.douyin.com/)，进行定时发送抖音消息来续火花
 
 ## 🚀 使用方法
 
@@ -42,7 +42,6 @@
 **部署方法：**
 
 1. Github Action 部署（推荐👍），操作说明见 [Action部署说明](docs/Action部署说明.md)
-
 2. 源码部署 （更适合高级用户），操作说明见[源代码部署说明](docs/源代码部署说明.md)
 
 ## 📢交流讨论
@@ -66,3 +65,5 @@
 ## 📄 开源协议
 
 本项目基于 MIT 协议开源，你可以自由使用、修改和分发本项目代码，详见 [LICENSE](LICENSE) 文件。
+
+## 防止action掉活跃
