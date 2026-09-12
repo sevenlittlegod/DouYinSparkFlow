@@ -1,0 +1,28 @@
+services:
+  douyin-spark-flow:
+    image: douyinsparkflow:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: douyin-spark-flow
+    restart: unless-stopped
+    init: true
+    mem_limit: 850m
+    pids_limit: 256
+    shm_size: 1gb
+    environment:
+      GITHUB_ACTIONS: "true"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - type: bind
+        source: ${CONFIG_ENV_FILE:-./config/.env}
+        target: /app/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - ${LOGS_DIR:-./logs}:/app/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

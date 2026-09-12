@@ -3,7 +3,7 @@ import os
 if os.path.exists(".env"):
     from dotenv import load_dotenv
 
-    load_dotenv(".env")
+    load_dotenv(".env", interpolate=False)
 
 from core.tasks import runTasks
 

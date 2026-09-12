@@ -1,0 +1,13 @@
+.git
+.github
+.env
+config/
+.venv/
+*.tar.gz
+*.zip
+logs/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd

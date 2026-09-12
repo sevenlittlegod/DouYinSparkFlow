@@ -6,3 +6,6 @@ logs/
 .DS_Store
 usersData.json
 .env
+config/
+*.tar.gz
+*.zip
