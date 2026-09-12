@@ -83,6 +83,12 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "COOKIES_SECOND"):
             config.get_userData()
 
+    def test_browser_cookie_with_empty_name_is_preserved(self):
+        # Chromium may return a nameless cookie; it is still valid cookie data.
+        unnamed = {**self.cookie, "name": ""}
+        os.environ["COOKIES_ALICE"] = json.dumps([self.cookie, unnamed])
+        self.assertEqual(config.get_userData()[0]["cookies"][1]["name"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

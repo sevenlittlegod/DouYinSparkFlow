@@ -118,7 +118,6 @@ def get_userData():
             if (
                 not isinstance(cookie, dict)
                 or not isinstance(cookie.get("name"), str)
-                or not cookie["name"]
                 or not isinstance(cookie.get("value"), str)
                 or not (
                     isinstance(cookie.get("url"), str) and cookie["url"]
