@@ -36,7 +36,7 @@ def handle_response(response: Response):
                 unique_id = item.get("unique_id")  # unique_id
                 sec_uid = item.get("sec_uid", "")  # sec_uid 可能不存在，提供默认值为空字符串
                 nickname = norm(item.get("nickname"))  # 昵称
-                remark_name = norm(item.get("remark_name", nickname))  #  备注名，如果没有则使用昵称
+                remark_name = norm(item.get("remark_name") or nickname)  # 空备注也回退到昵称
                 userIDDict[remark_name] = [short_id, unique_id, sec_uid, nickname, remark_name]
         except Exception as e:
             tb = traceback.extract_tb(e.__traceback__)
@@ -272,7 +272,7 @@ def do_user_task(browser, username, cookies, targets, on_result=None):
                 delay=5,
                 url="https://www.douyin.com/chat",
             )
-            time.sleep(5)
+            page.wait_for_timeout(5000)  # 等待时处理身份接口回调。
             wait_for_chat_selector(page, CONVERSATION_LIST_SELECTOR, username)
         except Exception:
             record_unattempted("login_or_page_unavailable")
