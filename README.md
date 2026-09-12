@@ -1,7 +1,7 @@
 # DouYin Spark Flow
 
-> 本 Fork 已于 2026-09-12 同步上游 main 的聊天页方案，并补充配置校验、未匹配目标报错、Docker 定时与服务器扫码登录辅助。
-> 优先阅读 [恢复与服务器部署](docs/恢复与服务器部署.md)。GitHub 工作流作为备用，定时执行需要仓库变量 `ENABLE_GITHUB_SCHEDULE=true`；与服务器任务同时开启会重复发送。
+> 本 Fork 已于 2026-09-12 同步上游 main 的聊天页方案，并补充服务器扫码登录、只读好友核对、逐好友结果记录、Docker 定时与 PushPlus 微信通知。
+> 优先阅读 [恢复与服务器部署](docs/恢复与服务器部署.md) 和 [技术日志](docs/技术日志.md)。GitHub 工作流作为备用，定时执行需要仓库变量 `ENABLE_GITHUB_SCHEDULE=true`；与服务器任务同时开启会重复发送。
 > “已按发送键”不等于服务端确认送达，首次运行请在抖音中核对实际收信。
 
 ![cover](docs/images/cover.png)
