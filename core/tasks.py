@@ -69,11 +69,11 @@ def retry_operation(name, operation, retries=3, delay=2, *args, **kwargs):
 def checkTargetName(targetName, targets):
     """检查targetName是否为目标
     """
-    
+
     targetSymbol = None
-    
+
     targetName = norm(targetName)
-    
+
     if targetName in userIDDict:
         matched = next((v for v in userIDDict[targetName] if v and v in targets), None)
         if matched is not None:
@@ -124,12 +124,12 @@ def scroll_and_select_user(page, username, targets):
                 found_targets.add(targetName)
 
                 logger.debug(f"账号 {username} 找到好友 {targetName}")
-                
+
                 targetSymbol = checkTargetName(targetName, targets)
 
                 if targetSymbol:
                     element.click()
-                    
+
                     yield targetSymbol
 
                     # [修改] 标记已找到，如果全找到了直接退出
