@@ -226,53 +226,94 @@ def wait_for_chat_selector(page, selector, username):
         ) from None
 
 
-def do_user_task(browser, username, cookies, targets):
+def do_user_task(browser, username, cookies, targets, on_result=None):
     if not targets:
         raise ValueError(f"账号 {username} 没有配置目标好友。")
-    context = browser.new_context()  # 每个任务使用独立的上下文
     submitted_targets = set()
+
+    def record_result(target, status, reason=None):
+        if on_result is not None:
+            on_result(target, status, reason)
+
+    def record_unattempted(reason):
+        for target in targets:
+            if target not in submitted_targets:
+                record_result(target, "not_attempted", reason)
+
     try:
-        context.set_default_navigation_timeout(config["browserTimeout"])
-        context.set_default_timeout(config["browserTimeout"])
-        page = context.new_page()
-        page.on("response", handle_response)
+        context = browser.new_context()  # 每个任务使用独立的上下文
+    except Exception:
+        record_unattempted("login_or_page_unavailable")
+        raise
+    try:
+        try:
+            context.set_default_navigation_timeout(config["browserTimeout"])
+            context.set_default_timeout(config["browserTimeout"])
+            page = context.new_page()
+            page.on("response", handle_response)
+        except Exception:
+            record_unattempted("login_or_page_unavailable")
+            raise
 
         try:
             context.add_cookies(cookies)
         except Exception:
+            record_unattempted("cookie_load_failed")
             # Playwright 的原始参数错误可能包含 Cookie 内容，不将它带入日志。
             raise ValueError(
                 f"账号 {username} 的 Cookie 无法载入浏览器，请重新导出完整的 Cookie JSON。"
             ) from None
 
-        retry_operation(
-            "打开抖音网页聊天页面",
-            page.goto,
-            retries=config["taskRetryTimes"],
-            delay=5,
-            url="https://www.douyin.com/chat",
-        )
-        time.sleep(5)
-        wait_for_chat_selector(page, CONVERSATION_LIST_SELECTOR, username)
+        try:
+            retry_operation(
+                "打开抖音网页聊天页面",
+                page.goto,
+                retries=config["taskRetryTimes"],
+                delay=5,
+                url="https://www.douyin.com/chat",
+            )
+            time.sleep(5)
+            wait_for_chat_selector(page, CONVERSATION_LIST_SELECTOR, username)
+        except Exception:
+            record_unattempted("login_or_page_unavailable")
+            raise
 
         logger.debug(f"账号 {username} 开始发送消息")
         for target in scroll_and_select_user(page, username, targets):
             # 不重发已尝试的目标，避免同一轮重复提交。
             if target in submitted_targets:
                 continue
-            wait_for_chat_selector(page, CHAT_EDITOR_SELECTOR, username)
-            chat_input = page.locator(CHAT_EDITOR_SELECTOR)
-            message = build_message()
-            lines = message.split("\\n")
-            for index, line in enumerate(lines):
-                chat_input.type(line)
-                if index < len(lines) - 1:
-                    chat_input.press("Shift+Enter")
+            try:
+                wait_for_chat_selector(page, CHAT_EDITOR_SELECTOR, username)
+                chat_input = page.locator(CHAT_EDITOR_SELECTOR)
+            except Exception:
+                record_result(target, "failed", "editor_unavailable")
+                raise
+            try:
+                message = build_message()
+                lines = message.split("\\n")
+            except Exception:
+                record_result(target, "failed", "message_build_failed")
+                raise
+            try:
+                for index, line in enumerate(lines):
+                    chat_input.type(line)
+                    if index < len(lines) - 1:
+                        chat_input.press("Shift+Enter")
+            except Exception:
+                record_result(target, "failed", "message_input_failed")
+                raise
 
             logger.debug(f"账号 {username} 准备给好友 {target} 提交消息")
             # 发送只尝试一次；失败或结果不明时停止，避免自动重复发送。
-            chat_input.press("Enter")
+            record_result(target, "unknown", "submission_in_progress")
+            try:
+                chat_input.press("Enter")
+            except Exception:
+                record_result(target, "unknown", "submission_uncertain")
+                raise
             submitted_targets.add(target)
+            record_result(target, "submitted_unverified")
             logger.info(
                 f"账号 {username} 已对好友 {target} 按下发送键；是否送达请在抖音聊天中确认。"
             )
@@ -280,6 +321,8 @@ def do_user_task(browser, username, cookies, targets):
 
         missing_targets = set(targets) - submitted_targets
         if missing_targets:
+            for target in sorted(missing_targets):
+                record_result(target, "missing", "target_not_found")
             raise RuntimeError(
                 f"账号 {username} 有 {len(missing_targets)} 个目标未提交消息："
                 f"{', '.join(sorted(missing_targets))}。"
@@ -290,7 +333,7 @@ def do_user_task(browser, username, cookies, targets):
         context.close()
 
 
-def runTasks():
+def runTasks(report=None):
     # 先校验全部配置，再启动浏览器，防止空任务或错误配置被报告为成功。
     userData = get_userData()
     playwright, browser = get_browser()
@@ -312,7 +355,18 @@ def runTasks():
             username = user.get("username", "未知用户")
             logger.info(f"开始处理账号 {username}")
             # 创建任务
-            do_user_task(browser, username, cookies, targets)
+            if report is None:
+                do_user_task(browser, username, cookies, targets)
+            else:
+                do_user_task(
+                    browser,
+                    username,
+                    cookies,
+                    targets,
+                    on_result=lambda target, status, reason: report.update_target(
+                        user["unique_id"], target, status, reason
+                    ),
+                )
             logger.info(f"账号 {username} 任务完成")
     finally:
         # 关闭浏览器实例

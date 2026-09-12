@@ -1,11 +1,8 @@
 """Container configuration, validated scheduling, and one task invocation."""
 import argparse
-from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import re
-import runpy
 import sys
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -69,31 +66,43 @@ def prepare():
     print(f"[docker] {len(accounts)} account(s); daily {hour:02}:{minute:02}:{second:02} {zone}", flush=True)
 
 
-def save_status(status, exit_code=None):
-    path = APP_DIR / "logs" / "last-run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    value = {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}
-    if exit_code is not None:
-        value["exit_code"] = exit_code
-    path.write_text(json.dumps(value) + "\n", encoding="utf-8")
-
-
 def run():
-    save_status("running")
+    from utils.task_report import TaskReport
+    from utils.notify import notify
+    report = TaskReport(APP_DIR / "logs" / "last-run.json")
+    phase = "configuration_invalid"
     try:
-        values, _ = load_configuration()
+        # Load notification settings even when task validation later fails.
+        path = Path(os.environ.get("CONFIG_ENV_PATH", "/app/.env"))
+        if path.is_file():
+            settings = dotenv_values(path, interpolate=False)
+            for key in ("NOTIFY_PROVIDER", "PUSHPLUS_TOKEN"):
+                if settings.get(key) is not None:
+                    os.environ[key] = settings[key]
+        values, accounts = load_configuration()
+        report.initialize_accounts(accounts)
+        phase = "task_failed"
         _, _, second, _ = schedule_settings(values)
         if second:
             time.sleep(second)
         print("[docker] Starting configured task", flush=True)
-        runpy.run_path(str(APP_DIR / "main.py"), run_name="__main__")
+        from core.tasks import runTasks
+        runTasks(report=report)
     except BaseException:
-        save_status("failed", 1)
+        report.finish("failed", phase)
         print("[docker] Task failed; inspect the preceding application error. Do not resend blindly.", file=sys.stderr, flush=True)
         raise
     else:
-        save_status("submitted_unverified", 0)
+        report.finish("submitted_unverified")
         print("[docker] Task finished; verify actual delivery in Douyin.", flush=True)
+    finally:
+        # Notification problems never retry or change the Douyin task result.
+        try:
+            report.data["notification"] = notify(report.data)
+        except Exception:
+            report.data["notification"] = {"status": "failed", "reason": "notification_internal_error"}
+        report.save()
+        print(f"[docker] Notification status: {report.data['notification']['status']}", flush=True)
 
 
 if __name__ == "__main__":
