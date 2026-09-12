@@ -1,0 +1,18 @@
+# Standalone optional login helper; the scheduled task is not started by this file.
+services:
+  douyin-login:
+    profiles: ["login"]
+    build:
+      context: .
+      dockerfile: Dockerfile.login
+    image: douyinsparkflow-login:local
+    init: true
+    restart: "no"
+    shm_size: 1gb
+    ports:
+      - "127.0.0.1:6080:6080"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      LOGIN_CONFIG_DIR: /config
+    volumes:
+      - ${CONFIG_DIR:-./config}:/config

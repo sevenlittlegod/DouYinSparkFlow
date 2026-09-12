@@ -1,44 +1,40 @@
 name: DouYin Spark Flow Schedule Run
+
 on:
-  workflow_dispatch: # 允许手动触发
-  schedule: # 定时任务
-    - cron: "0 1 * * *" # 每天 1:00 UTC（对应北京时间 9:00）
+  workflow_dispatch:
+  schedule:
+    - cron: "0 1 * * *" # 09:00 Asia/Shanghai; opt in with ENABLE_GITHUB_SCHEDULE=true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: douyin-spark-flow
+  cancel-in-progress: false
+
 jobs:
   run-main:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_GITHUB_SCHEDULE == 'true'
     timeout-minutes: 20
     runs-on: ubuntu-latest
     environment: user-data
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    - name: Test Douyin Accessibility
-      run: |
-        curl -I https://creator.douyin.com/
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    - name: Ensure browsers are installed
-      run: playwright install chromium --with-deps --only-shell
-    - name: Export Github Environment Variables and Secrets to JSON
-      env:
-        VARS_JSON: ${{ toJson(vars) }}
-        SECRETS_JSON: ${{ toJson(secrets) }}
-      run: python utils/export_github_env.py
-    - name: Run DouYin Spark Flow
-      run: python main.py
-    - uses: actions/upload-artifact@v4
-      if: ${{ !cancelled() }}
-      with:
-        name: run-logs
-        path: logs/
-  workflow-keepalive:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - uses: liskin/gh-workflow-keepalive@v1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Install browser
+        run: python -m playwright install chromium --with-deps --only-shell
+      - name: Prepare task configuration
+        env:
+          VARS_JSON: ${{ toJson(vars) }}
+          SECRETS_JSON: ${{ toJson(secrets) }}
+        run: python utils/export_github_env.py
+      - name: Validate configuration without sending
+        run: python -c "from dotenv import load_dotenv; load_dotenv(); from utils.config import get_config, get_userData; get_config(); get_userData(); print('Configuration is valid')"
+      - name: Run DouYin Spark Flow
+        run: python main.py
