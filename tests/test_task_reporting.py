@@ -100,3 +100,17 @@ class TaskReportingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             configure_notify.configure(path, 'bad\nvalue')
         self.assertEqual(dotenv_values(path)['PUSHPLUS_TOKEN'], 'a' * 32)
+
+    def test_browser_startup_failure_notifies_specific_cause_without_sending(self):
+        from core.browser import BrowserStartupError
+        with patch.object(runtime, 'load_configuration', return_value=({}, [self.account])):
+            with patch('core.tasks.runTasks', side_effect=BrowserStartupError('Browser unavailable')) as execute:
+                with patch('utils.notify.notify', return_value={'status': 'accepted'}) as notify:
+                    with self.assertRaises(BrowserStartupError):
+                        runtime.run()
+        execute.assert_called_once()
+        notify.assert_called_once()
+        result = notify.call_args.args[0]
+        self.assertEqual(result['error'], 'browser_error')
+        self.assertTrue(all(row['status'] == 'not_attempted' and row['reason'] == 'browser_error'
+                            for row in result['accounts'][0]['targets']))

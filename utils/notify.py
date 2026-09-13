@@ -27,7 +27,7 @@ REASON_LABELS = {
     "identity_ambiguous": "目标身份存在歧义",
     "send_failed": "提交消息时发生错误",
     "configuration_invalid": "任务配置有误",
-    "browser_error": "浏览器运行出错",
+    "browser_error": "浏览器启动失败，尚未打开聊天",
     "previous_failure": "前面的步骤失败，本目标未执行",
     "editor_unavailable": "输入框不可用",
     "message_build_failed": "消息生成失败",

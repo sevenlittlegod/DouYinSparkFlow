@@ -58,7 +58,7 @@ class TaskReport:
         for account in self.data['accounts']:
             for row in account['targets']:
                 if row['status'] == 'not_attempted' and row['reason'] == 'not_started':
-                    row['reason'] = 'run_stopped'
+                    row['reason'] = error if error in {'browser_error', 'configuration_invalid'} else 'run_stopped'
         self.save()
 
     def save(self):

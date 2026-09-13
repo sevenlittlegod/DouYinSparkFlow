@@ -37,6 +37,10 @@ def load_configuration():
     for key, value in values.items():
         os.environ[key] = value
     os.environ["GITHUB_ACTIONS"] = "true"  # Use the browser bundled in the container.
+    # cron does not inherit Docker image ENV. Restore the image's browser cache
+    # before starting Playwright, while retaining an explicitly configured path.
+    if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
     os.chdir(APP_DIR)
     from utils import config
     config.config = None
@@ -69,6 +73,7 @@ def prepare():
 def run():
     from utils.task_report import TaskReport
     from utils.notify import notify
+    from core.browser import BrowserStartupError
     report = TaskReport(APP_DIR / "logs" / "last-run.json")
     phase = "configuration_invalid"
     try:
@@ -88,8 +93,9 @@ def run():
         print("[docker] Starting configured task", flush=True)
         from core.tasks import runTasks
         runTasks(report=report)
-    except BaseException:
-        report.finish("failed", phase)
+    except BaseException as error:
+        reason = "browser_error" if isinstance(error, BrowserStartupError) else phase
+        report.finish("failed", reason)
         print("[docker] Task failed; inspect the preceding application error. Do not resend blindly.", file=sys.stderr, flush=True)
         raise
     else:
