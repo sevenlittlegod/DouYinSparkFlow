@@ -114,3 +114,39 @@ class TaskReportingTests(unittest.TestCase):
         self.assertEqual(result['error'], 'browser_error')
         self.assertTrue(all(row['status'] == 'not_attempted' and row['reason'] == 'browser_error'
                             for row in result['accounts'][0]['targets']))
+
+    def test_resume_sends_only_pending_and_notifies_combined_results(self):
+        report = TaskReport(self.root / 'logs/last-run.json')
+        report.initialize_accounts([self.account])
+        report.update_target('alice', 'Bob', 'submitted_unverified')
+        report.update_target('alice', 'Carol', 'failed', 'editor_unavailable')
+        report.finish('failed', 'task_failed')
+
+        def task(report, accounts):
+            self.assertEqual(accounts[0]['targets'], ['Carol'])
+            report.update_target('alice', 'Carol', 'submitted_unverified')
+
+        with patch.object(runtime, 'load_configuration', return_value=({}, [self.account])):
+            with patch('core.tasks.runTasks', side_effect=task) as execute:
+                with patch('utils.notify.notify', return_value={'status': 'accepted'}) as notify:
+                    runtime.run(resume=True)
+        execute.assert_called_once()
+        notify.assert_called_once()
+        result = notify.call_args.args[0]
+        self.assertEqual(result['status'], 'submitted_unverified')
+        self.assertEqual(result['resume_count'], 1)
+        self.assertTrue(all(r['status'] == 'submitted_unverified' for r in result['accounts'][0]['targets']))
+
+    def test_invalid_resume_leaves_report_intact_and_does_not_notify_or_send(self):
+        report = TaskReport(self.root / 'logs/last-run.json')
+        report.initialize_accounts([self.account])
+        report.data['started_at'] = '2000-01-01T00:00:00+00:00'
+        report.save()
+        before = report.path.read_bytes()
+        with patch.object(runtime, 'load_configuration', return_value=({}, [self.account])):
+            with patch('core.tasks.runTasks') as execute, patch('utils.notify.notify') as notify:
+                with self.assertRaises(ValueError):
+                    runtime.run(resume=True)
+        self.assertEqual(report.path.read_bytes(), before)
+        execute.assert_not_called()
+        notify.assert_not_called()

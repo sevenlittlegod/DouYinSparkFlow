@@ -70,11 +70,12 @@ def prepare():
     print(f"[docker] {len(accounts)} account(s); daily {hour:02}:{minute:02}:{second:02} {zone}", flush=True)
 
 
-def run():
-    from utils.task_report import TaskReport
+def run(resume=False):
+    from utils.task_report import TaskReport, prepare_resume
     from utils.notify import notify
     from core.browser import BrowserStartupError
-    report = TaskReport(APP_DIR / "logs" / "last-run.json")
+    report_path = APP_DIR / 'logs' / 'last-run.json'
+    report = None if resume else TaskReport(report_path)
     phase = "configuration_invalid"
     try:
         # Load notification settings even when task validation later fails.
@@ -85,17 +86,29 @@ def run():
                 if settings.get(key) is not None:
                     os.environ[key] = settings[key]
         values, accounts = load_configuration()
-        report.initialize_accounts(accounts)
+        pending = None
+        if resume:
+            previous, pending = prepare_resume(report_path, accounts, schedule_settings(values)[3])
+            report = TaskReport(report_path, previous=previous)
+            print(f'[docker] Resume: {sum(len(a["targets"]) for a in pending)} targets pending; previous submissions/uncertain outcomes retained.', flush=True)
+        else:
+            report.initialize_accounts(accounts)
         phase = "task_failed"
         _, _, second, _ = schedule_settings(values)
-        if second:
+        if second and not resume:
             time.sleep(second)
         print("[docker] Starting configured task", flush=True)
         from core.tasks import runTasks
-        runTasks(report=report)
+        if resume:
+            runTasks(report=report, accounts=pending)
+        else:
+            runTasks(report=report)
+        if any(row['status'] != 'submitted_unverified' for account in report.data['accounts'] for row in account['targets']):
+            raise RuntimeError('仍有未完成或状态未知的目标，请核对结果。')
     except BaseException as error:
         reason = "browser_error" if isinstance(error, BrowserStartupError) else phase
-        report.finish("failed", reason)
+        if report is not None:
+            report.finish("failed", reason)
         print("[docker] Task failed; inspect the preceding application error. Do not resend blindly.", file=sys.stderr, flush=True)
         raise
     else:
@@ -103,17 +116,19 @@ def run():
         print("[docker] Task finished; verify actual delivery in Douyin.", flush=True)
     finally:
         # Notification problems never retry or change the Douyin task result.
-        try:
-            report.data["notification"] = notify(report.data)
-        except Exception:
-            report.data["notification"] = {"status": "failed", "reason": "notification_internal_error"}
-        report.save()
-        print(f"[docker] Notification status: {report.data['notification']['status']}", flush=True)
+        if report is not None:
+            try:
+                report.data["notification"] = notify(report.data)
+            except Exception:
+                report.data["notification"] = {"status": "failed", "reason": "notification_internal_error"}
+            report.save()
+            print(f"[docker] Notification status: {report.data['notification']['status']}", flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("validate", "prepare", "run"))
+    parser.add_argument('--resume', action='store_true', help='Resume only definitely unsubmitted targets from today, preserving previous results.')
     args = parser.parse_args()
     if args.action == "validate":
         _, accounts = load_configuration()
@@ -121,4 +136,4 @@ if __name__ == "__main__":
     elif args.action == "prepare":
         prepare()
     else:
-        run()
+        run(resume=args.resume)

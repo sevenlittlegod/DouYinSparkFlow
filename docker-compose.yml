@@ -8,6 +8,7 @@ services:
     restart: unless-stopped
     init: true
     mem_limit: 850m
+    memswap_limit: 1700m
     pids_limit: 256
     shm_size: 1gb
     environment:

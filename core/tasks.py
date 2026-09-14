@@ -1,10 +1,12 @@
 import traceback
+import re
+from dataclasses import dataclass
 from utils.logger import setup_logger
 from utils.config import get_config, get_userData
 from utils import norm
 from core.msg_builder import build_message, build_message_with_openai
 from core.browser import get_browser
-from playwright.sync_api import Response, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Response, TimeoutError as PlaywrightTimeoutError, expect
 import time
 
 config = get_config()
@@ -15,6 +17,41 @@ CONVERSATION_ITEM_SELECTOR = ".conversationConversationItemwrapper"
 CONVERSATION_TITLE_SELECTOR = ".conversationConversationItemtitle"
 CONVERSATION_LIST_SELECTOR = ".conversationConversationListwrapper"
 CHAT_EDITOR_SELECTOR = ".messageEditorimChatEditorContainer"
+CHAT_INPUT_SELECTOR = '[contenteditable="true"][data-slate-editor="true"]'
+CHAT_TITLE_SELECTOR = '.RightPanelHeadertitle'
+
+
+@dataclass(frozen=True)
+class SelectedTarget:
+    target: str
+    title: str
+
+
+class IncompleteTaskError(RuntimeError):
+    """Only failures known to have occurred before entering a message."""
+
+
+def open_chat_editor(page, selection):
+    # Conversation rows move after messages arrive. Re-resolve the exact title
+    # at click time instead of clicking an old positional locator.
+    timeout = min(config['browserTimeout'], 30000)
+    title = page.locator(CONVERSATION_TITLE_SELECTOR).filter(
+        has_text=re.compile(r'^' + re.escape(selection.title) + r'$')
+    )
+    row = page.locator(CONVERSATION_ITEM_SELECTOR).filter(has=title)
+    if row.count() != 1:
+        raise IncompleteTaskError('会话目标已移动或标题不唯一，尚未输入消息。')
+    row.click(timeout=timeout)
+    expect(page.locator(CHAT_TITLE_SELECTOR)).to_have_text(selection.title, timeout=timeout)
+    editor = page.locator(CHAT_INPUT_SELECTOR)
+    expect(editor).to_be_editable(timeout=timeout)
+    return editor
+
+
+def check_chat_title(page, title):
+    expect(page.locator(CHAT_TITLE_SELECTOR)).to_have_text(
+        title, timeout=min(config['browserTimeout'], 5000)
+    )
 
 
 def handle_response(response: Response):
@@ -128,9 +165,7 @@ def scroll_and_select_user(page, username, targets):
                 targetSymbol = checkTargetName(targetName, targets)
 
                 if targetSymbol:
-                    element.click()
-
-                    yield targetSymbol
+                    yield SelectedTarget(targetSymbol, targetName)
 
                     # [修改] 标记已找到，如果全找到了直接退出
                     if targetSymbol in remaining_targets:
@@ -193,7 +228,7 @@ def scroll_and_select_user(page, username, targets):
                 )
 
                 # [修复] 检测滚动后的 scrollTop
-                time.sleep(0.3)
+                page.wait_for_timeout(300)
                 scroll_top_after = page.evaluate(
                     "(element) => element.scrollTop", scrollable_element
                 )
@@ -209,7 +244,7 @@ def scroll_and_select_user(page, username, targets):
                         f"账号 {username} 滚动好友列表以加载更多好友 (scrollTop: {scroll_top_before} -> {scroll_top_after})"
                     )
 
-                time.sleep(1.5)
+                page.wait_for_timeout(1500)
             else:
                 logger.error(f"账号 {username} 未找到滚动容器，退出")
                 break
@@ -226,10 +261,12 @@ def wait_for_chat_selector(page, selector, username):
         ) from None
 
 
-def do_user_task(browser, username, cookies, targets, on_result=None):
+def _do_user_pass(browser, username, cookies, targets, on_result=None):
     if not targets:
         raise ValueError(f"账号 {username} 没有配置目标好友。")
     submitted_targets = set()
+    failed_targets = set()
+    userIDDict.clear()  # Identity data belongs to this account/context only.
 
     def record_result(target, status, reason=None):
         if on_result is not None:
@@ -248,7 +285,7 @@ def do_user_task(browser, username, cookies, targets, on_result=None):
     try:
         try:
             context.set_default_navigation_timeout(config["browserTimeout"])
-            context.set_default_timeout(config["browserTimeout"])
+            context.set_default_timeout(min(config["browserTimeout"], 30000))
             page = context.new_page()
             page.on("response", handle_response)
         except Exception:
@@ -271,6 +308,7 @@ def do_user_task(browser, username, cookies, targets, on_result=None):
                 retries=config["taskRetryTimes"],
                 delay=5,
                 url="https://www.douyin.com/chat",
+                wait_until="domcontentloaded",
             )
             page.wait_for_timeout(5000)  # 等待时处理身份接口回调。
             wait_for_chat_selector(page, CONVERSATION_LIST_SELECTOR, username)
@@ -279,16 +317,21 @@ def do_user_task(browser, username, cookies, targets, on_result=None):
             raise
 
         logger.debug(f"账号 {username} 开始发送消息")
-        for target in scroll_and_select_user(page, username, targets):
+        for selection in scroll_and_select_user(page, username, targets):
+            target = selection.target
             # 不重发已尝试的目标，避免同一轮重复提交。
-            if target in submitted_targets:
+            if target in submitted_targets or target in failed_targets:
                 continue
             try:
-                wait_for_chat_selector(page, CHAT_EDITOR_SELECTOR, username)
-                chat_input = page.locator(CHAT_EDITOR_SELECTOR)
+                chat_input = open_chat_editor(page, selection)
             except Exception:
-                record_result(target, "failed", "editor_unavailable")
-                raise
+                record_result(target, "failed", "conversation_unavailable")
+                failed_targets.add(target)
+                logger.warning(f'账号 {username} 的好友 {target} 会话未就绪，尚未输入消息；继续其他目标。')
+                continue
+            if norm(chat_input.inner_text()):
+                record_result(target, 'failed', 'draft_present')
+                raise RuntimeError('会话已有草稿，请核对后再运行；尚未按发送键。')
             try:
                 message = build_message()
                 lines = message.split("\\n")
@@ -305,6 +348,11 @@ def do_user_task(browser, username, cookies, targets, on_result=None):
                 raise
 
             logger.debug(f"账号 {username} 准备给好友 {target} 提交消息")
+            try:
+                check_chat_title(page, selection.title)
+            except Exception:
+                record_result(target, 'failed', 'conversation_changed')
+                raise RuntimeError('输入后会话标题发生变化，未按发送键。') from None
             # 发送只尝试一次；失败或结果不明时停止，避免自动重复发送。
             record_result(target, "unknown", "submission_in_progress")
             try:
@@ -317,15 +365,16 @@ def do_user_task(browser, username, cookies, targets, on_result=None):
             logger.info(
                 f"账号 {username} 已对好友 {target} 按下发送键；是否送达请在抖音聊天中确认。"
             )
-            time.sleep(2)
+            page.wait_for_timeout(2000)
 
-        missing_targets = set(targets) - submitted_targets
-        if missing_targets:
+        missing_targets = set(targets) - submitted_targets - failed_targets
+        if missing_targets or failed_targets:
             for target in sorted(missing_targets):
                 record_result(target, "missing", "target_not_found")
-            raise RuntimeError(
-                f"账号 {username} 有 {len(missing_targets)} 个目标未提交消息："
-                f"{', '.join(sorted(missing_targets))}。"
+            remaining = missing_targets | failed_targets
+            raise IncompleteTaskError(
+                f"账号 {username} 有 {len(remaining)} 个目标未提交消息："
+                f"{', '.join(sorted(remaining))}。"
                 "请检查好友是否出现在网页会话列表，以及备注、昵称或抖音号是否与 targets 一致。"
                 "已提交的目标不会在本轮自动重发。"
             )
@@ -333,9 +382,32 @@ def do_user_task(browser, username, cookies, targets, on_result=None):
         context.close()
 
 
-def runTasks(report=None):
+def do_user_task(browser, username, cookies, targets, on_result=None):
+    """Retry preparation in a fresh context; never repeat an Enter attempt."""
+    submitted = set()
+
+    def record(target, status, reason=None):
+        if on_result is not None:
+            on_result(target, status, reason)
+        if status == 'submitted_unverified':
+            submitted.add(target)
+
+    attempts = max(1, min(config['taskRetryTimes'], 3))
+    for attempt in range(attempts):
+        pending = [target for target in targets if target not in submitted]
+        try:
+            return _do_user_pass(browser, username, cookies, pending, record)
+        except IncompleteTaskError:
+            if attempt + 1 == attempts:
+                raise
+            logger.warning(f'账号 {username} 准备重建页面，只重试尚未输入的 {len(set(targets) - submitted)} 个目标。')
+
+
+def runTasks(report=None, accounts=None):
     # 先校验全部配置，再启动浏览器，防止空任务或错误配置被报告为成功。
-    userData = get_userData()
+    userData = get_userData() if accounts is None else accounts
+    if not userData:
+        return
     playwright, browser = get_browser()
     try:
         # 检查是否启用多任务和任务数量

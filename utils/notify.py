@@ -30,6 +30,9 @@ REASON_LABELS = {
     "browser_error": "浏览器启动失败，尚未打开聊天",
     "previous_failure": "前面的步骤失败，本目标未执行",
     "editor_unavailable": "输入框不可用",
+    "conversation_unavailable": "会话打开或输入框加载超时，尚未输入消息",
+    "draft_present": "检测到已有草稿，未发送，请核对",
+    "conversation_changed": "会话标题发生变化，未按发送键",
     "message_build_failed": "消息生成失败",
     "message_input_failed": "消息输入失败",
     "submission_in_progress": "提交结果不确定，请勿盲目重发",
@@ -103,6 +106,8 @@ def build_notification(report):
     ]
     if not sum(counts.values()):
         body.extend(["", "本次没有可列出的好友结果；请检查服务器任务状态。"])
+    if report.get('resume_count'):
+        body.extend(['', '本次为当天断点补跑；上次已提交的好友计入汇总，未重复发送。'])
 
     overall_reason = REASON_LABELS.get(report.get("error")) if isinstance(report.get("error"), str) else None
     if overall_reason:

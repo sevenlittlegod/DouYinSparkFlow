@@ -13,17 +13,22 @@ class RuntimeReliabilityTests(unittest.TestCase):
         self.context = self.browser.new_context.return_value
         self.page = self.context.new_page.return_value
         self.editor = self.page.locator.return_value
+        self.editor.inner_text.return_value = ''
+        self.prepare = MagicMock(return_value=self.editor)
         self.patches = (
             patch.object(tasks.time, "sleep"),
             patch.object(tasks, "build_message", return_value="hello"),
             patch.object(tasks, "logger"),
+            patch.object(tasks, 'open_chat_editor', self.prepare),
+            patch.object(tasks, 'check_chat_title'),
+            patch.dict(tasks.config, {'taskRetryTimes': 1}),
         )
         for replacement in self.patches:
             replacement.start()
             self.addCleanup(replacement.stop)
 
     def run_user(self, selected, targets, on_result=None):
-        with patch.object(tasks, "scroll_and_select_user", return_value=iter(selected)):
+        with patch.object(tasks, "scroll_and_select_user", return_value=iter(tasks.SelectedTarget(t, t) for t in selected)):
             tasks.do_user_task(self.browser, "Alice", [], targets, on_result=on_result)
 
     def test_no_matching_targets_fails_without_sending(self):
@@ -56,17 +61,11 @@ class RuntimeReliabilityTests(unittest.TestCase):
         tasks.logger.info.assert_not_called()
         self.context.close.assert_called_once()
 
-    def test_list_and_editor_timeouts_explain_login_and_page_changes(self):
-        for blocked_selector in (tasks.CONVERSATION_LIST_SELECTOR, tasks.CHAT_EDITOR_SELECTOR):
-            with self.subTest(selector=blocked_selector):
-                def wait(selector, **kwargs):
-                    if selector == blocked_selector:
-                        raise PlaywrightTimeoutError("selector timed out")
-
-                self.page.wait_for_selector.side_effect = wait
-                with self.assertRaisesRegex(RuntimeError, "Cookie.*页面结构"):
-                    self.run_user(["Bob"], ["Bob"])
-                self.editor.press.assert_not_called()
+    def test_list_timeout_explains_login_and_page_changes(self):
+        self.page.wait_for_selector.side_effect = PlaywrightTimeoutError('list timed out')
+        with self.assertRaisesRegex(RuntimeError, 'Cookie.*页面结构'):
+            self.run_user(['Bob'], ['Bob'])
+        self.editor.press.assert_not_called()
 
     def test_browser_cookie_error_does_not_expose_cookie_in_traceback(self):
         secret = "PRIVATE_COOKIE_VALUE"
@@ -112,18 +111,17 @@ class RuntimeReliabilityTests(unittest.TestCase):
 
     def test_later_editor_failure_does_not_overwrite_earlier_submission(self):
         results = MagicMock()
-        # The list and Bob's editor load; Carol's editor is unavailable.
-        self.page.wait_for_selector.side_effect = [
-            None, None, PlaywrightTimeoutError("editor unavailable"),
-        ]
-        with self.assertRaisesRegex(RuntimeError, "Cookie.*页面结构"):
+        self.prepare.side_effect = [self.editor, PlaywrightTimeoutError('editor unavailable'), self.editor]
+        with self.assertRaises(tasks.IncompleteTaskError):
             self.run_user(["Bob", "Carol", "Dave"], ["Bob", "Carol", "Dave"], results)
         self.assertEqual(results.call_args_list, [
             call("Bob", "unknown", "submission_in_progress"),
             call("Bob", "submitted_unverified", None),
-            call("Carol", "failed", "editor_unavailable"),
+            call("Carol", "failed", "conversation_unavailable"),
+            call("Dave", "unknown", "submission_in_progress"),
+            call("Dave", "submitted_unverified", None),
         ])
-        self.editor.press.assert_called_once_with("Enter")
+        self.assertEqual(self.editor.press.call_count, 2)
         self.context.close.assert_called_once()
 
     def test_uncertain_enter_is_recorded_before_press_and_never_retried(self):
@@ -213,6 +211,36 @@ class RuntimeReliabilityTests(unittest.TestCase):
         ])
         self.browser.close.assert_called_once()
         playwright.stop.assert_called_once()
+
+    def test_recovery_reopens_context_and_excludes_submitted_targets(self):
+        results = MagicMock()
+        self.prepare.side_effect = [self.editor, PlaywrightTimeoutError('editor unavailable'), self.editor]
+        selections = [iter([tasks.SelectedTarget('Bob', 'Bob'), tasks.SelectedTarget('Carol', 'Carol')]),
+                      iter([tasks.SelectedTarget('Carol', 'Carol')])]
+        with patch.dict(tasks.config, {'taskRetryTimes': 3}):
+            with patch.object(tasks, 'scroll_and_select_user', side_effect=selections) as select:
+                tasks.do_user_task(self.browser, 'Alice', [], ['Bob', 'Carol'], results)
+        self.assertEqual([c.args[2] for c in select.call_args_list], [['Bob', 'Carol'], ['Carol']])
+        self.assertEqual(self.browser.new_context.call_count, 2)
+        self.assertEqual(self.editor.press.call_args_list, [call('Enter'), call('Enter')])
+        self.assertEqual(results.call_args_list[-1], call('Carol', 'submitted_unverified', None))
+
+    def test_existing_draft_stops_without_typing_or_sending(self):
+        self.editor.inner_text.return_value = 'Unfinished personal message'
+        results = MagicMock()
+        with self.assertRaisesRegex(RuntimeError, '草稿'):
+            self.run_user(['Bob'], ['Bob'], results)
+        self.editor.type.assert_not_called()
+        self.editor.press.assert_not_called()
+        results.assert_called_once_with('Bob', 'failed', 'draft_present')
+
+    def test_changed_recipient_after_typing_stops_before_enter(self):
+        results = MagicMock()
+        with patch.object(tasks, 'check_chat_title', side_effect=AssertionError('Wrong chat')):
+            with self.assertRaisesRegex(RuntimeError, '标题'):
+                self.run_user(['Bob'], ['Bob'], results)
+        self.editor.press.assert_not_called()
+        results.assert_called_once_with('Bob', 'failed', 'conversation_changed')
 
 
 if __name__ == "__main__":
