@@ -7,9 +7,11 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from portal.server import PortalServer, load_admin_token
 from portal.store import AccessError, ConflictError, Store, ValidationError, parse_cookies
+from portal.auth import totp
 
 
 COOKIE = "private_cookie_0123456789"
@@ -144,6 +146,12 @@ class HTTPTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.store = Store(self.temp.name)
         self.server = PortalServer(("127.0.0.1", 0), self.store, "admin-token-" * 5, base_path="/spark")
+        self.password = 'test administrator password'
+        setup_time = int(time.time()) - 60
+        with patch('portal.auth.time.time', return_value=setup_time):
+            enrollment = self.server.admin_auth.begin(self.server.admin_token, self.server.admin_token, 'Test')
+            self.secret = enrollment['secret']
+            self.server.admin_auth.finish(enrollment['setup_token'], self.password, totp(self.secret, setup_time // 30))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.origin = self.server.public_origin
@@ -175,7 +183,8 @@ class HTTPTests(unittest.TestCase):
         return status, result, response_headers
 
     def login(self, role="admin", token=None):
-        status, data, headers = self.request("/spark/api/" + ("login" if role == "admin" else "exchange"), {"token": token or self.server.admin_token})
+        payload = {'password': self.password, 'code': totp(self.secret, int(time.time()) // 30)} if role == 'admin' else {'token': token}
+        status, data, headers = self.request("/spark/api/" + ("login" if role == "admin" else "exchange"), payload)
         self.assertEqual(200, status)
         self.assertIn("HttpOnly", headers["Set-Cookie"])
         self.assertIn("SameSite=Strict", headers["Set-Cookie"])

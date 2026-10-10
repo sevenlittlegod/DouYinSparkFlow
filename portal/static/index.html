@@ -14,7 +14,34 @@
     <section class="hero"><p class="eyebrow">DOUYIN SPARK FLOW</p><h1 id="heading">让火花每天继续</h1><p id="intro">填写账号和好友，提交后由管理员审核启用。</p></section>
     <div id="notice" role="status" aria-live="polite" hidden></div>
     <section id="welcome" class="card" hidden><h2>通过专属邀请开始</h2><p>请打开管理员发给你的完整邀请链接。每个链接只对应一个账号。</p><p class="muted">已经提交过？使用原邀请链接继续修改。邀请过期后，请管理员重新生成。</p><a class="text-link" href="__BASE_PATH__/admin">管理员登录 →</a></section>
-    <section id="admin-login" class="card" hidden><h2>管理员登录</h2><p class="muted">使用服务器保存的管理员凭据。凭据仅用于建立本次登录。</p><form id="login-form"><label for="admin-token">管理员凭据</label><input id="admin-token" type="password" required autocomplete="current-password"><button type="submit">进入管理页</button></form></section>
+    <section id="admin-login" class="card" hidden>
+      <h2>管理员登录</h2><p class="muted">使用密码和验证器 App 中的动态码登录。</p>
+      <form id="login-form"><input type="text" name="username" value="admin" autocomplete="username" hidden>
+        <label for="admin-password">管理员密码</label><input id="admin-password" type="password" required maxlength="128" autocomplete="current-password">
+        <label for="admin-code" id="code-label">验证器动态码</label><input id="admin-code" type="text" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="6 位数字">
+        <p class="hint" id="code-help">动态码每 30 秒更新，同一个码只能使用一次。请开启手机自动设置时间。</p>
+        <label class="checkbox"><input id="use-recovery" type="checkbox">改用一次性恢复码</label>
+        <button type="submit">验证并登录</button>
+      </form>
+    </section>
+    <section id="auth-setup" class="card" hidden>
+      <h2>首次设置管理员登录</h2><p class="muted">先核验服务器初始化凭据，再设置密码并绑定手机验证器。</p>
+      <form id="setup-start-form"><label for="bootstrap-token">初始化凭据</label><input id="bootstrap-token" type="password" required autocomplete="off">
+        <p class="hint">在你的终端执行 <code>ssh hz_ali "cat /opt/douyinsparkflow/portal-data/admin-token"</code> 获取。此凭据仅用于首次绑定，不能直接进入管理页。</p>
+        <button type="submit">开始绑定验证器</button></form>
+      <form id="setup-confirm-form" hidden>
+        <p>在验证器 App 中选择“添加账号 / 扫描二维码”。</p><img id="totp-qr" alt="管理员验证器绑定二维码" class="totp-qr" width="240" height="240">
+        <details><summary>无法扫码？手动输入密钥</summary><label for="totp-secret">绑定密钥</label><input id="totp-secret" readonly autocomplete="off" spellcheck="false"><p class="hint">选择基于时间（TOTP）、6 位数字、30 秒。密钥只用于你的验证器，不要分享。</p></details>
+        <label for="new-password">设置管理员密码</label><input id="new-password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"><p class="hint">12–128 个字符，推荐使用密码管理器生成并保存。</p>
+        <label for="repeat-password">再次输入密码</label><input id="repeat-password" type="password" required minlength="12" maxlength="128" autocomplete="new-password">
+        <label for="setup-code">验证器当前动态码</label><input id="setup-code" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="6 位数字">
+        <p class="hint">绑定页面有效期 10 分钟；输入正确动态码后才会启用双重验证。超时请刷新重来。</p><button type="submit">验证并启用双重验证</button>
+      </form>
+    </section>
+    <section id="auth-recovery" class="card" hidden><h2>请保存恢复码</h2><p>手机丢失时，可用“密码 + 一条恢复码”登录。每条只能使用一次，这些恢复码只展示这一次。</p>
+      <label for="recovery-codes">一次性恢复码</label><textarea id="recovery-codes" rows="10" readonly autocomplete="off" spellcheck="false"></textarea>
+      <p class="hint">请保存到密码管理器或离线保管。不要与其他人分享。</p><label class="checkbox"><input id="recovery-saved" type="checkbox">我已妥善保存恢复码</label><button id="finish-setup" disabled>进入管理页</button>
+    </section>
     <section id="owner" hidden>
       <div id="owner-status" class="status-card"></div>
       <form id="account-form">

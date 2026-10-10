@@ -9,7 +9,7 @@ Group=ecs-user
 WorkingDirectory=/opt/douyinsparkflow
 Environment=PORTAL_PUBLIC_ORIGIN=https://YOUR_DOMAIN
 Environment=PORTAL_BASE_PATH=/spark
-ExecStart=/usr/bin/python3 -m portal.server --data-dir /opt/douyinsparkflow/portal-data --host 127.0.0.1 --port 18766
+ExecStart=/opt/douyinsparkflow/.portal-venv/bin/python -m portal.server --data-dir /opt/douyinsparkflow/portal-data --host 127.0.0.1 --port 18766
 Restart=on-failure
 UMask=0077
 NoNewPrivileges=true

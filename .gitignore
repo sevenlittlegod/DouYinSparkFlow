@@ -1,4 +1,5 @@
 .venv/
+.portal-venv/
 **/__pycache__/
 .vscode/
 chrome/

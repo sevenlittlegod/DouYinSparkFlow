@@ -5,6 +5,7 @@ config/
 portal-data/
 account-data/
 .venv/
+.portal-venv/
 *.tar.gz
 *.zip
 logs/

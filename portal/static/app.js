@@ -3,6 +3,7 @@ const base = document.querySelector('meta[name="portal-base"]').content;
 const $ = id => document.getElementById(id);
 let session = null;
 let currentAccount = null;
+let setupToken = null;
 
 function notice(message, error = false) {
   $("notice").textContent = message;
@@ -147,21 +148,65 @@ async function renderAdmin() {
 }
 
 async function showPage() {
-  for (const id of ["welcome", "admin-login", "owner", "admin"]) $(id).hidden = true;
+  for (const id of ["welcome", "admin-login", "auth-setup", "auth-recovery", "owner", "admin"]) $(id).hidden = true;
   $("logout").hidden = !session;
   if (session?.role === "admin") {
     $("heading").textContent = "账号管理"; $("intro").textContent = "发出邀请，核对配置，再批准启用。";
     $("admin").hidden = false; await renderAdmin();
+  } else if (location.pathname.replace(/\/$/, "").endsWith("/admin")) {
+    $("heading").textContent = "安全登录";
+    $("intro").textContent = "密码与手机验证器，共同保护账号管理。";
+    const auth = await api("/auth/status");
+    $(auth.configured ? "admin-login" : "auth-setup").hidden = false;
   } else if (session?.role === "owner") {
     $("owner").hidden = false; renderOwner((await api("/account")).account);
-  } else if (location.pathname.replace(/\/$/, "").endsWith("/admin")) $("admin-login").hidden = false;
-  else $("welcome").hidden = false;
+  } else $("welcome").hidden = false;
 }
 
 $("login-form").addEventListener("submit", async event => {
   event.preventDefault(); const button = event.submitter; button.disabled = true;
-  try { session = (await api("/login", {token: $("admin-token").value})).session; $("admin-token").value = ""; notice(""); await showPage(); }
+  try {
+    session = (await api("/login", {password: $("admin-password").value, code: $("admin-code").value.trim(), recovery: $("use-recovery").checked})).session;
+    $("admin-password").value = ""; $("admin-code").value = ""; notice(""); await showPage();
+  }
   catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+});
+$("use-recovery").addEventListener("change", () => {
+  const recovery = $("use-recovery").checked;
+  $("code-label").textContent = recovery ? "一次性恢复码" : "验证器动态码";
+  $("admin-code").value = "";
+  $("admin-code").inputMode = recovery ? "text" : "numeric";
+  $("admin-code").maxLength = recovery ? 32 : 6;
+  if (recovery) $("admin-code").removeAttribute("pattern");
+  else $("admin-code").pattern = "[0-9]{6}";
+  $("admin-code").placeholder = recovery ? "输入一条尚未使用的恢复码" : "6 位数字";
+  $("code-help").textContent = recovery ? "密码仍然必填；每条恢复码只能使用一次。" : "动态码每 30 秒更新，同一个码只能使用一次。请开启手机自动设置时间。";
+});
+$("setup-start-form").addEventListener("submit", async event => {
+  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  try {
+    const setup = await api("/auth/setup", {token: $("bootstrap-token").value});
+    $("bootstrap-token").value = ""; setupToken = setup.setup_token;
+    $("totp-qr").src = setup.qr; $("totp-secret").value = setup.secret;
+    $("setup-start-form").hidden = true; $("setup-confirm-form").hidden = false; notice("");
+  } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+});
+$("setup-confirm-form").addEventListener("submit", async event => {
+  event.preventDefault(); const button = event.submitter;
+  if ($("new-password").value !== $("repeat-password").value) { notice("两次输入的密码不一致，请重新核对。", true); $("repeat-password").focus(); return; }
+  button.disabled = true;
+  try {
+    const result = await api("/auth/confirm", {setup_token: setupToken, password: $("new-password").value, code: $("setup-code").value.trim()});
+    session = result.session; setupToken = null;
+    for (const id of ["new-password", "repeat-password", "setup-code", "totp-secret"]) $(id).value = "";
+    $("totp-qr").removeAttribute("src"); $("auth-setup").hidden = true; $("auth-recovery").hidden = false;
+    $("recovery-codes").value = result.recovery_codes.join("\n"); notice("密码和验证器已启用。请先保存恢复码。 ");
+  } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+});
+$("recovery-saved").addEventListener("change", () => { $("finish-setup").disabled = !$("recovery-saved").checked; });
+$("finish-setup").addEventListener("click", async () => {
+  if (!$("recovery-saved").checked) return;
+  $("recovery-codes").value = ""; notice(""); await showPage();
 });
 $("account-form").addEventListener("submit", async event => {
   event.preventDefault(); $("save").disabled = true;

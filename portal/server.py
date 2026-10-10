@@ -14,6 +14,7 @@ import time
 from urllib.parse import urlsplit
 
 from portal.store import AccessError, ConflictError, Store, ValidationError
+from portal.auth import AdminAuth, Throttled
 
 
 MAX_BODY = 192 * 1024
@@ -25,6 +26,7 @@ class PortalServer(ThreadingHTTPServer):
 
     def __init__(self, address, store, admin_token, public_origin=None, base_path=""):
         self.store, self.admin_token = store, admin_token
+        self.admin_auth = AdminAuth(store)
         self.base_path = "/" + base_path.strip("/") if base_path.strip("/") else ""
         if self.base_path and not re.fullmatch(r"(/[a-zA-Z0-9_-]+)+", self.base_path):
             raise ValueError("PORTAL_BASE_PATH 无效。")
@@ -142,6 +144,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.finish_response(200, (STATIC / path[1:]).read_bytes(), "text/javascript; charset=utf-8" if path.endswith(".js") else "text/css; charset=utf-8")
             if path == "/api/session":
                 return self.finish_response(200, {"session": self.session(False)})
+            if path == '/api/auth/status':
+                return self.finish_response(200, {'configured': self.server.admin_auth.configured()})
             if path == "/api/account":
                 session = self.session()
                 if session["role"] != "owner":
@@ -161,6 +165,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             path, data = self.route(), self.body()
+            if path == '/api/auth/setup':
+                return self.finish_response(200, self.server.admin_auth.begin(
+                    data.get('token'), self.server.admin_token, 'SparkFlow ' + self.server.allowed_host))
+            if path == '/api/auth/confirm':
+                codes = self.server.admin_auth.finish(data.get('setup_token'), data.get('password'), data.get('code'))
+                sid, session = self.server.store.new_session('admin')
+                self.server.store.logout(self.sid())
+                return self.finish_response(200, {'session': session, 'recovery_codes': codes},
+                                            cookie=self.session_cookie(sid, session['expires_at']))
             if path in ("/api/login", "/api/exchange"):
                 if not self.server.login_allowed(self.client_address[0]):
                     return self.finish_response(429, {"error": "尝试次数过多，请一分钟后重试。"})
@@ -168,8 +181,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(token, str) or len(token) > 200:
                     raise AccessError("凭据无效。")
                 if path == "/api/login":
-                    if not hmac.compare_digest(token, self.server.admin_token):
-                        raise AccessError("管理员凭据不正确。")
+                    self.server.admin_auth.verify(data.get('password'), data.get('code'), data.get('recovery') is True)
                     sid, session = self.server.store.new_session("admin")
                 else:
                     sid, session = self.server.store.new_session("owner", token)
@@ -205,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.store.revoke_invite(match[1])
                 return self.finish_response(200, {"ok": True})
             return self.finish_response(404, {"error": "操作不存在。"})
+        except Throttled as exc:
+            self.finish_response(429, {"error": str(exc)})
         except AccessError as exc:
             self.finish_response(403, {"error": str(exc)})
         except ConflictError as exc:

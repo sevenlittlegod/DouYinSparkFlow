@@ -10,6 +10,9 @@ COPY requirements.txt /tmp/requirements.txt
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r /tmp/requirements.txt
 
+COPY portal/requirements.txt /tmp/portal-requirements.txt
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r /tmp/portal-requirements.txt
+
 COPY . /app
 
 RUN sed -i 's/\r$//' /app/docker/*.sh \
