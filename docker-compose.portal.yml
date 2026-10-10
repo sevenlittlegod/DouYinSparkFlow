@@ -35,3 +35,33 @@ services:
       options:
         max-size: "5m"
         max-file: "3"
+  binding-worker:
+    image: douyinsparkflow:portal
+    container_name: douyin-binding-worker
+    user: "${PORTAL_UID:-1000}:${PORTAL_GID:-1000}"
+    environment:
+      HOME: /tmp
+      PYTHONUNBUFFERED: "1"
+    entrypoint: ["python", "-m", "portal.binding_worker"]
+    restart: unless-stopped
+    init: true
+    mem_limit: 850m
+    memswap_limit: 1700m
+    pids_limit: 256
+    shm_size: 512m
+    stop_grace_period: 20s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    # No public port, Docker socket, or original-account configuration mount.
+    volumes:
+      - ./portal-data:/portal-data
+      - ./logs:/legacy-logs
+      - ./account_worker:/app/account_worker:ro
+      - ./core:/app/core:ro
+      - ./utils:/app/utils:ro
+      - ./portal:/app/portal:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

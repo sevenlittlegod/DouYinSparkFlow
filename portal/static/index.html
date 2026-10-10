@@ -47,11 +47,30 @@
       <form id="account-form">
         <section class="card"><div class="step-title"><span class="step">01</span><h2>你的抖音账号</h2></div>
           <label for="username">账号备注</label><input id="username" name="username" maxlength="60" required placeholder="例如：小王的续火花">
+          <div class="binding-box">
+            <h3>扫码连接抖音</h3><p class="hint">用本人抖音 App 扫码并确认，自动核对账号、读取最近会话。这个步骤不会发送消息。</p>
+            <label class="checkbox"><input type="checkbox" id="binding-consent">我同意本服务器读取并保存本人的抖音登录状态及最近会话名单，用于下方续火花配置。</label>
+            <div class="actions"><button type="button" id="start-binding" disabled>扫码绑定</button><button type="button" id="read-friends" class="secondary" disabled>读取已保存账号的会话</button><button type="button" id="cancel-binding" class="quiet" hidden>取消本次操作</button></div>
+            <div id="binding-panel" hidden>
+              <p id="binding-status" role="status" aria-live="polite"></p>
+              <img id="binding-qr" class="binding-qr" width="240" height="240" alt="用本人抖音 App 扫描此登录二维码" hidden>
+              <p id="binding-expiry" class="hint"></p><p id="binding-identity" class="verified-identity" hidden></p>
+            </div>
+            <p class="hint">建议在电脑显示二维码、用手机扫码。二维码过期可取消后重新开始。完成后仍需提交配置，并由管理员批准启用。</p>
+          </div>
           <label for="unique-id">本人抖音号</label><input id="unique-id" name="unique_id" maxlength="64" required placeholder="在抖音个人主页查看" autocomplete="off" spellcheck="false"><p class="hint">填写账号的抖音号，不是昵称。请确认与下面的登录凭据属于同一个人。</p>
-          <label for="cookies">登录凭据 <span id="cookie-saved" class="saved"></span></label><textarea id="cookies" rows="3" placeholder="粘贴 sessionid 的值、完整 Cookie 或 Cookie JSON" autocomplete="off" spellcheck="false"></textarea><p class="hint">保存后不会回显。修改名单时留空即可保留。此凭据让服务器代你发送消息，只提交你自己的账号。</p>
+          <details id="manual-cookies"><summary>手动导入登录凭据（备用）</summary>
+          <label for="cookies">登录凭据 <span id="cookie-saved" class="saved"></span></label><textarea id="cookies" rows="3" placeholder="粘贴 sessionid 的值、完整 Cookie 或 Cookie JSON" autocomplete="off" spellcheck="false"></textarea><p class="hint">扫码完成后不用填写。保存后不会回显。修改名单时留空即可保留。</p>
           <details class="help"><summary>如何获取 sessionid？</summary><ol><li>在电脑浏览器打开抖音网页版，登录自己的账号。</li><li>按 F12 打开开发者工具，进入“应用 / Application → Cookies → https://www.douyin.com”。</li><li>找到名称为 <code>sessionid</code> 的项，复制其“值 / Value”，粘贴到上面。</li></ol><p>复制后请勿点击抖音网页版的“退出登录”，以免会话被撤销。格式正确不等于登录仍有效；单个 sessionid 无法登录时，可以导入完整 Cookie JSON。这里无需输入抖音密码。登录失效时更新凭据，再提交审核。</p></details>
+          </details>
         </section>
         <section class="card"><div class="step-title"><span class="step">02</span><h2>要续火花的好友</h2></div>
+          <div id="conversation-picker" hidden>
+            <h3>从最近会话选择</h3><p id="conversation-summary" class="hint"></p>
+            <label for="friend-search">搜索昵称或抖音号</label><input id="friend-search" type="search" placeholder="输入昵称或抖音号" autocomplete="off">
+            <div id="conversation-list" class="conversation-list"></div>
+            <button type="button" id="apply-friends" class="secondary">将所选好友应用到下方名单</button><p class="hint">只更新本次列表中可勾选的好友，手填和未读取到的好友会保留。同名会话需先在抖音设置不同备注，再重新读取。</p>
+          </div>
           <label for="friends">好友名单 <span id="friend-count" class="saved">0 位</span></label><textarea id="friends" rows="7" required spellcheck="false" placeholder="小明 xiaoming123&#10;小红 123456789"></textarea><p class="hint">每行一位：昵称 + 空格 + 抖音号。昵称含空格也可以；最后一项必须是抖音号。仅对名单里的好友执行。</p>
         </section>
         <section class="card"><div class="step-title"><span class="step">03</span><h2>消息与时间</h2></div>

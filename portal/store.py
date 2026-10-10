@@ -252,7 +252,7 @@ class Store:
             ids = [r["id"] for r in db.execute("SELECT id FROM accounts ORDER BY updated_at DESC")]
         return [self.account(i) for i in ids]
 
-    def save(self, account_id, payload, expected_revision):
+    def save(self, account_id, payload, expected_revision, binding_id=None, binding_sid=None):
         if type(expected_revision) is not int:
             raise ValidationError("缺少配置版本，请刷新页面后重试。")
         with self.connect() as db:
@@ -263,6 +263,9 @@ class Store:
             if row["revision"] != expected_revision:
                 raise ConflictError("配置已在其他窗口更新；请刷新后重新填写。")
             previous = json.loads(row["pending"] or row["active"]) if (row["pending"] or row["active"]) else None
+            if binding_id:
+                from portal.binding import Bindings
+                payload = Bindings.apply(db, binding_sid or '', binding_id, account_id, expected_revision, payload)
             config = validate_config(payload, previous)
             revision = row["revision"] + 1
             db.execute("UPDATE accounts SET pending=?,revision=?,updated_at=? WHERE id=?",

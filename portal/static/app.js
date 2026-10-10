@@ -4,6 +4,9 @@ const $ = id => document.getElementById(id);
 let session = null;
 let currentAccount = null;
 let setupToken = null;
+let binding = null, bindingTimer = null;
+let selectedFriends = new Set();
+const bindingLive = new Set(['queued', 'starting', 'waiting_scan', 'reading']);
 
 function notice(message, error = false) {
   $("notice").textContent = message;
@@ -69,6 +72,94 @@ function renderOwner(account) {
     : account.enabled ? `已启用版本 ${account.active_revision}，每天按设置时间运行。修改后需要重新审核。`
     : account.active ? "账号已停用。可请管理员恢复已批准版本；也可以修改后重新提交审核。" : "尚未提交。完成下面四步后交给管理员审核。";
   countFriends();
+  bindingButtons();
+}
+
+function bindingButtons() {
+  const busy = bindingLive.has(binding?.state);
+  const consent = $('binding-consent').checked;
+  $('start-binding').disabled = busy || !consent;
+  $('read-friends').disabled = busy || !consent || !(currentAccount?.pending || currentAccount?.active)?.cookies_configured;
+  $('cancel-binding').hidden = !binding || ![...bindingLive, 'ready'].includes(binding.state);
+}
+
+function friendLines() {
+  return $('friends').value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+}
+
+function lineId(line) { return line.split(/[，,\t]+|\s+/).at(-1); }
+
+function renderConversations() {
+  const query = $('friend-search').value.trim().toLocaleLowerCase();
+  const container = $('conversation-list'); container.replaceChildren();
+  const rows = (binding?.friends || []).filter(f => (f.nickname + ' ' + f.douyin_id).toLocaleLowerCase().includes(query));
+  for (const friend of rows) {
+    const label = element('label', undefined, 'conversation-choice');
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox';
+    checkbox.checked = selectedFriends.has(friend.douyin_id); checkbox.disabled = friend.ambiguous;
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selectedFriends.add(friend.douyin_id); else selectedFriends.delete(friend.douyin_id);
+      $('apply-friends').textContent = `应用所选 ${selectedFriends.size} 位好友`;
+    });
+    const text = element('span'); text.append(element('strong', friend.nickname), element('small', friend.douyin_id + (friend.ambiguous ? ' · 同名，请先设置不同备注' : '')));
+    label.append(checkbox, text); container.append(label);
+  }
+  if (!rows.length) container.append(element('p', '没有匹配的会话。可以在下方手动填写好友。', 'muted'));
+  $('apply-friends').textContent = `应用所选 ${selectedFriends.size} 位好友`;
+}
+
+function renderBinding(result) {
+  const changed = binding?.id !== result?.id || binding?.state !== result?.state;
+  binding = result;
+  $('binding-panel').hidden = !result;
+  const ready = result?.state === 'ready';
+  $('unique-id').readOnly = ready;
+  $('cookies').disabled = ready;
+  $('binding-identity').hidden = !ready;
+  $('conversation-picker').hidden = !ready;
+  $('binding-qr').hidden = result?.state !== 'waiting_scan' || !result?.qr_version;
+  if ($('binding-qr').hidden) $('binding-qr').removeAttribute('src');
+  else {
+    const src = `${base}/api/binding/${result.id}/qr?v=${result.qr_version}`;
+    if ($('binding-qr').getAttribute('src') !== src) $('binding-qr').src = src;
+  }
+  if (result) {
+    const labels = {queued:'正在排队。扫码与定时发送依次执行，早晨 08:20–09:10 优先保留给定时任务。',starting:'正在启动抖音登录页面，通常需要几十秒。',waiting_scan:'请用本人抖音 App 扫码，并在手机确认登录。',reading:'已登录，正在核对本人身份并读取最近会话。',ready:'账号已核实。请选择好友，再提交配置等待审核。',consumed:'登录凭据已随配置提交审核。',failed:'本次操作未完成。',expired:'本次结果已过期，请重新开始。',cancelled:'已取消本次操作。'};
+    $('binding-status').textContent = result.error || labels[result.state] || '请重新开始。';
+    const left = Math.max(0, Math.ceil((result.expires_at * 1000 - Date.now()) / 60000));
+    $('binding-expiry').textContent = bindingLive.has(result.state) || ready ? `本次操作及未提交结果将在约 ${left} 分钟后过期。` : '';
+    if (ready) {
+      $('unique-id').value = result.identity.unique_id;
+      $('cookies').value = '';
+      $('cookie-saved').textContent = '扫码凭据已准备 · 提交后保存';
+      $('binding-identity').textContent = `已核实：${result.identity.nickname} · 抖音号 ${result.identity.unique_id}`;
+      $('conversation-summary').textContent = `读取到 ${result.friends.length} 位最近会话联系人。${result.partial ? '读取未完整结束，名单可能不全。' : '仅包含网页最近会话，不等于全部好友。'}尚未发送任何消息。`;
+      if (changed) {
+        const ids = new Set(friendLines().map(lineId));
+        selectedFriends = new Set(result.friends.filter(f => !f.ambiguous && ids.has(f.douyin_id)).map(f => f.douyin_id));
+        renderConversations();
+      }
+    }
+  }
+  bindingButtons();
+}
+
+function scheduleBindingPoll() {
+  clearTimeout(bindingTimer);
+  if (!binding || ![...bindingLive, 'ready'].includes(binding.state)) return;
+  bindingTimer = setTimeout(async () => {
+    try { renderBinding((await api(`/binding/${binding.id}`)).binding); scheduleBindingPoll(); }
+    catch (error) { $('binding-status').textContent = error.message + ' 刷新页面可重新查看。'; }
+  }, binding.state === 'ready' ? 15000 : 2500);
+}
+
+async function startBinding(mode) {
+  if (!$('binding-consent').checked) return;
+  $('start-binding').disabled = true; $('read-friends').disabled = true;
+  try {
+    renderBinding((await api('/binding/start', {mode, revision:currentAccount.revision})).binding);
+    scheduleBindingPoll();
+  } catch (error) { notice(error.message, true); bindingButtons(); }
 }
 
 function configDetails(config) {
@@ -160,6 +251,7 @@ async function showPage() {
     $(auth.configured ? "admin-login" : "auth-setup").hidden = false;
   } else if (session?.role === "owner") {
     $("owner").hidden = false; renderOwner((await api("/account")).account);
+    renderBinding((await api('/binding')).binding); scheduleBindingPoll();
   } else $("welcome").hidden = false;
 }
 
@@ -215,7 +307,8 @@ $("account-form").addEventListener("submit", async event => {
     const config = {username: $("username").value, unique_id: $("unique-id").value, cookies: $("cookies").value,
       friends: $("friends").value, message: $("message").value, hour, minute,
       pushplus_token: $("pushplus").value.trim(), clear_pushplus: $("clear-push").checked};
-    renderOwner((await api("/account", {config, revision: currentAccount.revision})).account);
+    const saved = await api("/account", {config, revision: currentAccount.revision, binding_id: binding?.state === 'ready' ? binding.id : undefined});
+    clearTimeout(bindingTimer); renderBinding(null); renderOwner(saved.account);
     notice("配置已提交，等待管理员审核。修改后的版本尚未启用。"); window.scrollTo({top: 0, behavior: "smooth"});
   } catch (error) { notice(error.message, true); $("notice").scrollIntoView({block: "center"}); }
   finally { $("save").disabled = false; }
@@ -231,6 +324,24 @@ $("copy-invite").addEventListener("click", async () => {
 });
 $("refresh").addEventListener("click", async () => { try { await renderAdmin(); notice("状态已刷新。"); } catch (error) { notice(error.message, true); } });
 $("friends").addEventListener("input", countFriends);
+$('binding-consent').addEventListener('change', bindingButtons);
+$('start-binding').addEventListener('click', () => startBinding('qr'));
+$('read-friends').addEventListener('click', () => startBinding('saved'));
+$('friend-search').addEventListener('input', renderConversations);
+$('cancel-binding').addEventListener('click', async () => {
+  if (!binding) return;
+  try { await api(`/binding/${binding.id}/cancel`, {}); clearTimeout(bindingTimer); renderBinding((await api(`/binding/${binding.id}`)).binding); }
+  catch (error) { notice(error.message, true); }
+});
+$('apply-friends').addEventListener('click', () => {
+  if (binding?.state !== 'ready') return;
+  const available = new Set(binding.friends.filter(f => !f.ambiguous).map(f => f.douyin_id));
+  const lines = friendLines().filter(line => !available.has(lineId(line)));
+  for (const friend of binding.friends) if (!friend.ambiguous && selectedFriends.has(friend.douyin_id)) lines.push(friend.nickname + ' ' + friend.douyin_id);
+  if (lines.length > 200) { notice('最多选择 200 位好友，请减少名单。', true); return; }
+  $('friends').value = lines.join('\n'); countFriends();
+  notice('所选好友已填入名单。核对消息与时间后，提交配置等待审核。');
+});
 $("logout").addEventListener("click", async () => {
   try { await api("/logout", {}); session = null; location.replace(base + "/"); } catch (error) { notice(error.message, true); }
 });

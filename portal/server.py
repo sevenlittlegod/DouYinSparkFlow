@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from portal.store import AccessError, ConflictError, Store, ValidationError
 from portal.auth import AdminAuth, Throttled
+from portal.binding import Bindings
 
 
 MAX_BODY = 192 * 1024
@@ -27,6 +28,7 @@ class PortalServer(ThreadingHTTPServer):
     def __init__(self, address, store, admin_token, public_origin=None, base_path=""):
         self.store, self.admin_token = store, admin_token
         self.admin_auth = AdminAuth(store)
+        self.bindings = Bindings(store)
         self.base_path = "/" + base_path.strip("/") if base_path.strip("/") else ""
         if self.base_path and not re.fullmatch(r"(/[a-zA-Z0-9_-]+)+", self.base_path):
             raise ValueError("PORTAL_BASE_PATH 无效。")
@@ -146,6 +148,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.finish_response(200, {"session": self.session(False)})
             if path == '/api/auth/status':
                 return self.finish_response(200, {'configured': self.server.admin_auth.configured()})
+            if path == '/api/binding':
+                return self.finish_response(200, {'binding': self.server.bindings.current(self.sid())})
+            match = re.fullmatch(r'/api/binding/([0-9a-f]{32})(/qr)?', path)
+            if match:
+                result = self.server.bindings.get(self.sid(), match[1], image=bool(match[2]))
+                return self.finish_response(200, result if match[2] else {'binding': result},
+                                            'image/png' if match[2] else 'application/json; charset=utf-8')
             if path == "/api/account":
                 session = self.session()
                 if session["role"] != "owner":
@@ -195,7 +204,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/account":
                 if session["role"] != "owner":
                     raise AccessError("仅可保存本人账号。")
-                return self.finish_response(200, {"account": self.server.store.save(session["account_id"], data.get("config"), data.get("revision"))})
+                return self.finish_response(200, {"account": self.server.store.save(session["account_id"], data.get("config"), data.get("revision"), data.get('binding_id'), self.sid())})
+            if path == '/api/binding/start':
+                return self.finish_response(200, {'binding': self.server.bindings.start(self.sid(), data.get('mode'), data.get('revision'))})
+            match = re.fullmatch(r'/api/binding/([0-9a-f]{32})/cancel', path)
+            if match:
+                self.server.bindings.cancel(self.sid(), match[1])
+                return self.finish_response(200, {'ok': True})
             if path == "/api/admin/invites":
                 invite = self.server.store.create_invite(data.get("label"), data.get("days", 7), data.get("account_id"))
                 invite["url"] = self.server.public_origin + self.server.base_path + "/#invite=" + invite.pop("token")
