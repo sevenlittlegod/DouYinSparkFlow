@@ -7,5 +7,7 @@ logs/
 usersData.json
 .env
 config/
+portal-data/
+account-data/
 *.tar.gz
 *.zip

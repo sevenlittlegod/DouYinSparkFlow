@@ -74,7 +74,7 @@ def run(resume=False):
     from utils.task_report import TaskReport, prepare_resume
     from utils.notify import notify
     from core.browser import BrowserStartupError
-    report_path = APP_DIR / 'logs' / 'last-run.json'
+    report_path = Path(os.environ.get('TASK_LOG_DIR', str(APP_DIR / 'logs'))) / 'last-run.json'
     report = None if resume else TaskReport(report_path)
     phase = "configuration_invalid"
     try:
@@ -118,6 +118,8 @@ def run(resume=False):
         # Notification problems never retry or change the Douyin task result.
         if report is not None:
             try:
+                report.data['notification'] = {'status': 'in_progress'}
+                report.save()  # A crash during notify must not cause a blind retry.
                 report.data["notification"] = notify(report.data)
             except Exception:
                 report.data["notification"] = {"status": "failed", "reason": "notification_internal_error"}
@@ -125,9 +127,33 @@ def run(resume=False):
             print(f"[docker] Notification status: {report.data['notification']['status']}", flush=True)
 
 
+def notify_interrupted():
+    """One best-effort failure notification after a killed child; never sends chats."""
+    import json
+    from utils.task_report import TaskReport
+    from utils.notify import notify
+    path = Path(os.environ.get('TASK_LOG_DIR', str(APP_DIR / 'logs'))) / 'last-run.json'
+    previous = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else None
+    if previous and previous.get('notification'):
+        return
+    _, accounts = load_configuration()
+    report = TaskReport.open_existing(path) if previous else TaskReport(path)
+    if not previous:
+        report.initialize_accounts(accounts)
+    report.finish('failed', 'task_interrupted')
+    report.data['notification'] = {'status': 'in_progress'}
+    report.save()
+    try:
+        report.data['notification'] = notify(report.data)
+    except Exception:
+        report.data['notification'] = {'status': 'failed', 'reason': 'notification_internal_error'}
+    report.save()
+    print('[docker] Interrupted task notification processed; no chat was opened.', flush=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("validate", "prepare", "run"))
+    parser.add_argument("action", choices=("validate", "prepare", "run", "notify-interrupted"))
     parser.add_argument('--resume', action='store_true', help='Resume only definitely unsubmitted targets from today, preserving previous results.')
     args = parser.parse_args()
     if args.action == "validate":
@@ -135,5 +161,7 @@ if __name__ == "__main__":
         print(f"Configuration is valid for {len(accounts)} account(s). No message was sent.")
     elif args.action == "prepare":
         prepare()
+    elif args.action == 'notify-interrupted':
+        notify_interrupted()
     else:
         run(resume=args.resume)

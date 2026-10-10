@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="portal-base" content="__BASE_PATH__">
+  <title>续火花 · 账号配置</title>
+  <link rel="stylesheet" href="__BASE_PATH__/style.css">
+  <script src="__BASE_PATH__/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+  <header class="top"><a href="__BASE_PATH__/" class="brand"><span class="brand-mark" aria-hidden="true">✦</span> 续火花<span class="brand-sub">账号配置</span></a><button id="logout" class="quiet" hidden>退出</button></header>
+  <main>
+    <section class="hero"><p class="eyebrow">DOUYIN SPARK FLOW</p><h1 id="heading">让火花每天继续</h1><p id="intro">填写账号和好友，提交后由管理员审核启用。</p></section>
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <section id="welcome" class="card" hidden><h2>通过专属邀请开始</h2><p>请打开管理员发给你的完整邀请链接。每个链接只对应一个账号。</p><p class="muted">已经提交过？使用原邀请链接继续修改。邀请过期后，请管理员重新生成。</p><a class="text-link" href="__BASE_PATH__/admin">管理员登录 →</a></section>
+    <section id="admin-login" class="card" hidden><h2>管理员登录</h2><p class="muted">使用服务器保存的管理员凭据。凭据仅用于建立本次登录。</p><form id="login-form"><label for="admin-token">管理员凭据</label><input id="admin-token" type="password" required autocomplete="current-password"><button type="submit">进入管理页</button></form></section>
+    <section id="owner" hidden>
+      <div id="owner-status" class="status-card"></div>
+      <form id="account-form">
+        <section class="card"><div class="step-title"><span class="step">01</span><h2>你的抖音账号</h2></div>
+          <label for="username">账号备注</label><input id="username" name="username" maxlength="60" required placeholder="例如：小王的续火花">
+          <label for="unique-id">本人抖音号</label><input id="unique-id" name="unique_id" maxlength="64" required placeholder="在抖音个人主页查看" autocomplete="off" spellcheck="false"><p class="hint">填写账号的抖音号，不是昵称。请确认与下面的登录凭据属于同一个人。</p>
+          <label for="cookies">登录凭据 <span id="cookie-saved" class="saved"></span></label><textarea id="cookies" rows="3" placeholder="粘贴 sessionid 的值、完整 Cookie 或 Cookie JSON" autocomplete="off" spellcheck="false"></textarea><p class="hint">保存后不会回显。修改名单时留空即可保留。此凭据让服务器代你发送消息，只提交你自己的账号。</p>
+          <details class="help"><summary>如何获取 sessionid？</summary><ol><li>在电脑浏览器打开抖音网页版，登录自己的账号。</li><li>按 F12 打开开发者工具，进入“应用 / Application → Cookies → https://www.douyin.com”。</li><li>找到名称为 <code>sessionid</code> 的项，复制其“值 / Value”，粘贴到上面。</li></ol><p>也可以粘贴浏览器导出的 Cookie JSON。这里无需输入抖音密码。登录失效时更新凭据，再提交审核。</p></details>
+        </section>
+        <section class="card"><div class="step-title"><span class="step">02</span><h2>要续火花的好友</h2></div>
+          <label for="friends">好友名单 <span id="friend-count" class="saved">0 位</span></label><textarea id="friends" rows="7" required spellcheck="false" placeholder="小明 xiaoming123&#10;小红 123456789"></textarea><p class="hint">每行一位：昵称 + 空格 + 抖音号。昵称含空格也可以；最后一项必须是抖音号。仅对名单里的好友执行。</p>
+        </section>
+        <section class="card"><div class="step-title"><span class="step">03</span><h2>消息与时间</h2></div>
+          <label for="message">每天发送的内容</label><textarea id="message" rows="4" maxlength="2000" required placeholder="今日自动续火花[赞]"></textarea><p class="hint">可以直接换行。填写 [API] 可插入每日一言。</p>
+          <label for="time">每天执行时间</label><div class="time-row"><input id="time" type="time" required value="09:00"><span class="muted">北京时间 · Asia/Shanghai</span></div><p class="hint">到点后按队列执行。当前服务器 08:30–09:10 优先运行原有任务；此时段的新账号会在 09:10 后排队。审核通过时若已过今天设定时间，可能当天尽快开始执行。</p>
+        </section>
+        <section class="card"><div class="step-title"><span class="step">04</span><h2>微信结果通知 <span class="optional">可选</span></h2></div>
+          <label for="pushplus">PushPlus Token <span id="push-saved" class="saved"></span></label><input id="pushplus" type="password" maxlength="128" autocomplete="off" placeholder="从自己的 PushPlus 账户复制"><p class="hint">运行结束后通知成功、失败及未完成情况。使用你自己的 Token；保存后不会回显，留空保留现有配置。</p><label class="checkbox"><input type="checkbox" id="clear-push">关闭并移除已保存的微信通知</label>
+        </section>
+        <div class="submit-area"><label class="checkbox"><input type="checkbox" id="consent" required>我确认这是本人的账号，并授权服务器在管理员批准后，按上述时间向名单里的好友发送上述消息。</label><p class="muted">提交后进入待审核状态。管理员批准后，才会按此版本定时运行。</p><button type="submit" id="save">提交配置，等待审核</button></div>
+      </form>
+    </section>
+    <section id="admin" hidden>
+      <div class="status-card">这里只显示通过网页接入的账号。原服务器配置中的账号继续独立运行。</div>
+      <section class="card"><h2>邀请一个新账号</h2><form id="invite-form"><label for="invite-label">账号备注</label><input id="invite-label" required maxlength="60" placeholder="例如：小王的续火花"><div class="form-row"><div><label for="invite-days">邀请有效期</label><select id="invite-days"><option value="7">7 天</option><option value="1">1 天</option><option value="30">30 天</option></select></div><button type="submit">生成邀请链接</button></div></form><div id="invite-result" hidden><label for="invite-url">复制后发给账号本人</label><textarea id="invite-url" rows="3" readonly></textarea><button id="copy-invite" class="secondary">复制链接</button><p class="hint">链接持有人可编辑这个账号，请私下发送。链接只在创建时展示；丢失后可重新生成。</p></div></section>
+      <div class="section-head"><h2>账号与待审核配置</h2><button id="refresh" class="quiet">刷新状态</button></div><div id="accounts"></div>
+    </section>
+    <footer>配置由服务管理员保存在其服务器。只添加已同意接收消息的好友。<br>提交成功表示页面操作完成；登录和消息送达仍需以实际执行结果为准。</footer>
+  </main>
+</body></html>

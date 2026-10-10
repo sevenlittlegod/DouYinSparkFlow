@@ -2,6 +2,8 @@
 .github
 .env
 config/
+portal-data/
+account-data/
 .venv/
 *.tar.gz
 *.zip

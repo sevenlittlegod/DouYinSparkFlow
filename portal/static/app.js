@@ -1,0 +1,201 @@
+"use strict";
+const base = document.querySelector('meta[name="portal-base"]').content;
+const $ = id => document.getElementById(id);
+let session = null;
+let currentAccount = null;
+
+function notice(message, error = false) {
+  $("notice").textContent = message;
+  $("notice").classList.toggle("error", error);
+  $("notice").hidden = !message;
+}
+
+async function api(path, data) {
+  const options = {credentials: "same-origin", headers: {}};
+  if (data !== undefined) {
+    options.method = "POST";
+    options.headers["Content-Type"] = "application/json";
+    if (session) options.headers["X-CSRF-Token"] = session.csrf;
+    options.body = JSON.stringify(data);
+  }
+  const response = await fetch(base + "/api" + path, options);
+  let result;
+  try { result = await response.json(); }
+  catch { throw new Error("服务暂时不可用，请稍后重试。"); }
+  if (!response.ok) throw new Error(result.error || "操作未完成，请重试。");
+  return result;
+}
+
+function element(tag, text, className) {
+  const el = document.createElement(tag);
+  if (text !== undefined) el.textContent = text;
+  if (className) el.className = className;
+  return el;
+}
+
+function action(text, callback, className = "secondary") {
+  const button = element("button", text, className);
+  button.type = "button";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { await callback(); } catch (error) { notice(error.message, true); }
+    finally { button.disabled = false; }
+  });
+  return button;
+}
+
+function countFriends() {
+  $("friend-count").textContent = $("friends").value.split(/\r?\n/).filter(x => x.trim()).length + " 位";
+}
+
+function renderOwner(account) {
+  currentAccount = account;
+  const config = account.pending || account.active;
+  $("username").value = config?.username || account.label;
+  $("unique-id").value = config?.unique_id || "";
+  $("cookies").value = "";
+  $("cookie-saved").textContent = config?.cookies_configured ? "已保存 · 留空保留" : "首次必填";
+  $("friends").value = (config?.friends || []).map(f => f.nickname + " " + f.douyin_id).join("\n");
+  $("message").value = config?.message || "今日自动续火花[赞]";
+  $("time").value = String(config?.hour ?? 9).padStart(2, "0") + ":" + String(config?.minute ?? 0).padStart(2, "0");
+  $("pushplus").value = "";
+  $("clear-push").checked = false;
+  $("consent").checked = false;
+  $("push-saved").textContent = config?.pushplus_configured ? "已配置 · 留空保留" : "未配置";
+  $("owner-status").classList.toggle("pending", !!account.pending);
+  $("owner-status").textContent = account.pending
+    ? `版本 ${account.revision} 已提交，等待管理员审核。` + (account.enabled ? `\n当前仍按已批准的版本 ${account.active_revision} 执行。` : "\n审核启用前不会发送消息。")
+    : account.enabled ? `已启用版本 ${account.active_revision}，每天按设置时间运行。修改后需要重新审核。`
+    : account.active ? "账号已停用。可请管理员恢复已批准版本；也可以修改后重新提交审核。" : "尚未提交。完成下面四步后交给管理员审核。";
+  countFriends();
+}
+
+function configDetails(config) {
+  const dl = element("dl", undefined, "config-list");
+  for (const [key, value] of [
+    ["本人抖音号", config.unique_id], ["好友数量", config.friends.length + " 位"],
+    ["每天执行", String(config.hour).padStart(2, "0") + ":" + String(config.minute).padStart(2, "0") + "（北京时间）"],
+    ["登录凭据", config.cookies_configured ? "已保存（有效性以执行结果为准）" : "缺失"],
+    ["微信通知", config.pushplus_configured ? "已配置 PushPlus" : "未开启"], ["消息内容", config.message]
+  ]) { dl.append(element("dt", key), element("dd", value)); }
+  const box = element("div"); box.append(dl);
+  const details = element("details");
+  details.append(element("summary", `查看 ${config.friends.length} 位好友`), element("div", config.friends.map(f => f.nickname + " · " + f.douyin_id).join("\n"), "friend-list"));
+  box.append(details);
+  return box;
+}
+
+async function showInvitation(data) {
+  const {invite} = await api("/admin/invites", data);
+  $("invite-url").value = invite.url;
+  $("invite-result").hidden = false;
+  $("invite-result").scrollIntoView({block: "center", behavior: "smooth"});
+  notice("邀请已创建。请复制链接，私下发送给账号本人。");
+  await renderAdmin();
+}
+
+async function renderAdmin() {
+  const {accounts} = await api("/admin/accounts");
+  $("accounts").replaceChildren();
+  if (!accounts.length) $("accounts").append(element("p", "还没有网页接入的账号。先生成一份邀请。", "empty"));
+  for (const account of accounts) {
+    const card = element("article", undefined, "card");
+    const title = element("div", undefined, "account-title");
+    title.append(element("h2", account.pending?.username || account.active?.username || account.label));
+    title.append(element("span", account.pending ? "待审核" : account.enabled ? "已启用" : "未启用", "badge " + (account.pending ? "pending" : account.enabled ? "enabled" : "")));
+    card.append(title, element("div", `配置版本 ${account.revision} · ` + (account.enabled ? `运行版本 ${account.active_revision}` : "定时执行已关闭"), "account-meta"));
+    if (account.pending) {
+      card.append(element("p", `以下是待审核版本 ${account.revision}。批准后进入定时队列；若已过今天设定时间，可能当天尽快执行。08:30–09:10 优先运行原有任务。`, "muted"), configDetails(account.pending));
+      if (account.active) {
+        const old = element("details"); old.append(element("summary", `对照已批准版本 ${account.active_revision}`), configDetails(account.active)); card.append(old);
+      }
+    } else if (account.active) card.append(configDetails(account.active));
+    else card.append(element("p", "邀请已建立，等待账号本人填写。", "muted"));
+    if (account.run_status) {
+      const result = account.run_status;
+      const labels = {submitted_unverified: "消息已提交", failed: "执行失败", running: "执行中", partial: "部分未完成", success: "完成", worker_failed: "任务未能启动或执行异常", interrupted: "执行中断，请核对后再补跑", configuration_conflict: "与原有账号重复，请停用重复配置"};
+      card.append(element("p", `最近执行：${labels[result.status] || result.status || "暂无"} · 已提交 ${result.submitted ?? "—"} / ${result.total ?? "—"}` + (result.updated_at ? " · " + result.updated_at : ""), "run-status"));
+    }
+    const actions = element("div", undefined, "actions");
+    if (account.pending) actions.append(action(`批准版本 ${account.revision} 并启用`, async () => {
+      if (!confirm(`已核对“${account.pending.username}”的本人抖音号、好友和消息内容？\n批准版本 ${account.revision} 后，服务器将排队自动发送。若已过今天的设定时间，可能当天尽快执行。`)) return;
+      await api(`/admin/accounts/${account.id}/approve`, {revision: account.revision}); await renderAdmin(); notice("已批准启用。若今天尚未执行且设定时间已过，会尽快排队运行。");
+    }, ""));
+    if (account.enabled) actions.append(action("停用账号", async () => {
+      if (!confirm("停用后将不再启动此账号的新定时任务，已经开始的任务可能继续完成。确认停用？")) return;
+      await api(`/admin/accounts/${account.id}/disable`, {}); await renderAdmin(); notice("已停用此账号的后续定时任务。");
+    }, "danger"));
+    if (!account.enabled && account.active) actions.append(action(`恢复已批准版本 ${account.active_revision}`, async () => {
+      if (!confirm(`确认恢复已批准版本 ${account.active_revision}？\n${account.pending ? "当前待审核修改不会生效。\n" : ""}若今天尚未执行且设定时间已过，可能当天尽快排队发送。`)) return;
+      await api(`/admin/accounts/${account.id}/enable`, {active_revision: account.active_revision}); await renderAdmin(); notice("已恢复指定的已批准版本；待审核配置仍需另行批准。");
+    }));
+    actions.append(action("生成修改邀请", () => showInvitation({label: account.label, account_id: account.id, days: 7})));
+    card.append(actions);
+    const invites = element("details"); invites.append(element("summary", "管理已有邀请"));
+    for (const invite of account.invites) {
+      const row = element("div", undefined, "invite-row");
+      const expired = invite.expires_at * 1000 <= Date.now();
+      row.append(element("span", invite.revoked ? "已撤销" : expired ? "已过期" : `有效至 ${new Date(invite.expires_at * 1000).toLocaleString("zh-CN", {timeZone: "Asia/Shanghai"})}`));
+      if (!invite.revoked && !expired) row.append(action("撤销", async () => {
+        if (!confirm("撤销此邀请并退出使用它登录的用户？已启用的定时任务不受影响。")) return;
+        await api(`/admin/invites/${invite.id}/revoke`, {}); await renderAdmin(); notice("邀请已撤销。");
+      }, "quiet"));
+      invites.append(row);
+    }
+    card.append(invites); $("accounts").append(card);
+  }
+}
+
+async function showPage() {
+  for (const id of ["welcome", "admin-login", "owner", "admin"]) $(id).hidden = true;
+  $("logout").hidden = !session;
+  if (session?.role === "admin") {
+    $("heading").textContent = "账号管理"; $("intro").textContent = "发出邀请，核对配置，再批准启用。";
+    $("admin").hidden = false; await renderAdmin();
+  } else if (session?.role === "owner") {
+    $("owner").hidden = false; renderOwner((await api("/account")).account);
+  } else if (location.pathname.replace(/\/$/, "").endsWith("/admin")) $("admin-login").hidden = false;
+  else $("welcome").hidden = false;
+}
+
+$("login-form").addEventListener("submit", async event => {
+  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  try { session = (await api("/login", {token: $("admin-token").value})).session; $("admin-token").value = ""; notice(""); await showPage(); }
+  catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+});
+$("account-form").addEventListener("submit", async event => {
+  event.preventDefault(); $("save").disabled = true;
+  try {
+    const [hour, minute] = $("time").value.split(":").map(Number);
+    const config = {username: $("username").value, unique_id: $("unique-id").value, cookies: $("cookies").value,
+      friends: $("friends").value, message: $("message").value, hour, minute,
+      pushplus_token: $("pushplus").value.trim(), clear_pushplus: $("clear-push").checked};
+    renderOwner((await api("/account", {config, revision: currentAccount.revision})).account);
+    notice("配置已提交，等待管理员审核。修改后的版本尚未启用。"); window.scrollTo({top: 0, behavior: "smooth"});
+  } catch (error) { notice(error.message, true); $("notice").scrollIntoView({block: "center"}); }
+  finally { $("save").disabled = false; }
+});
+$("invite-form").addEventListener("submit", async event => {
+  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  try { await showInvitation({label: $("invite-label").value, days: Number($("invite-days").value)}); }
+  catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+});
+$("copy-invite").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("invite-url").value); notice("邀请链接已复制。"); }
+  catch { $("invite-url").select(); notice("请长按或按 Ctrl+C 复制选中的完整链接。"); }
+});
+$("refresh").addEventListener("click", async () => { try { await renderAdmin(); notice("状态已刷新。"); } catch (error) { notice(error.message, true); } });
+$("friends").addEventListener("input", countFriends);
+$("logout").addEventListener("click", async () => {
+  try { await api("/logout", {}); session = null; location.replace(base + "/"); } catch (error) { notice(error.message, true); }
+});
+
+(async () => {
+  try {
+    const fragment = new URLSearchParams(location.hash.slice(1));
+    const invitation = fragment.get("invite");
+    if (location.hash) history.replaceState(null, "", location.pathname);
+    session = invitation ? (await api("/exchange", {token: invitation})).session : (await api("/session")).session;
+    await showPage();
+  } catch (error) { notice(error.message, true); $("welcome").hidden = false; }
+})();

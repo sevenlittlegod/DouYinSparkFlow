@@ -3,7 +3,7 @@ import os
 from logging.handlers import RotatingFileHandler
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
-LOG_FILE = "logs/app.log"
+LOG_FILE = os.path.join(os.environ.get("TASK_LOG_DIR", "logs"), "app.log")
 
 
 def resolve_log_level(level):

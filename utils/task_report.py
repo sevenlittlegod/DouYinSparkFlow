@@ -42,6 +42,15 @@ def prepare_resume(path, accounts, zone, now=None):
 
 
 class TaskReport:
+    @classmethod
+    def open_existing(cls, path):
+        """Load a report for a notification-only update without resetting outcomes."""
+        report = cls.__new__(cls)
+        report.path = Path(path)
+        report.audit_path = report.path.parent / 'target-audit.json'
+        report.data = json.loads(report.path.read_text(encoding='utf-8'))
+        return report
+
     def __init__(self, path, audit_path=None, previous=None):
         self.path = Path(path)
         self.audit_path = Path(audit_path) if audit_path else self.path.parent / 'target-audit.json'

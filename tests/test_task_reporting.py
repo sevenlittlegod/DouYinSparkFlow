@@ -150,3 +150,31 @@ class TaskReportingTests(unittest.TestCase):
         self.assertEqual(report.path.read_bytes(), before)
         execute.assert_not_called()
         notify.assert_not_called()
+
+    def test_interrupted_notification_preserves_outcomes_and_runs_only_once(self):
+        report = TaskReport(self.root / 'logs/last-run.json')
+        report.initialize_accounts([self.account])
+        report.update_target('alice', 'Bob', 'submitted_unverified')
+        report.update_target('alice', 'Carol', 'unknown', 'submission_in_progress')
+        with patch.object(runtime, 'load_configuration', return_value=({}, [self.account])), \
+             patch('utils.notify.notify', return_value={'status': 'accepted'}) as notify, \
+             patch('core.tasks.runTasks') as send:
+            runtime.notify_interrupted()
+            runtime.notify_interrupted()
+        notify.assert_called_once()
+        send.assert_not_called()
+        data = json.loads(report.path.read_text(encoding='utf-8'))
+        self.assertEqual(data['error'], 'task_interrupted')
+        self.assertEqual([r['status'] for r in data['accounts'][0]['targets']], ['submitted_unverified', 'unknown'])
+
+    def test_notification_in_progress_is_not_repeated_after_process_crash(self):
+        report = TaskReport(self.root / 'logs/last-run.json')
+        report.initialize_accounts([self.account])
+        report.data['notification'] = {'status': 'in_progress'}
+        report.save()
+        before = report.path.read_bytes()
+        with patch('utils.notify.notify') as notify, patch.object(runtime, 'load_configuration') as config:
+            runtime.notify_interrupted()
+        notify.assert_not_called()
+        config.assert_not_called()
+        self.assertEqual(report.path.read_bytes(), before)

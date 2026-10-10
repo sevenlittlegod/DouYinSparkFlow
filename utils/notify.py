@@ -43,6 +43,7 @@ REASON_LABELS = {
     "not_started": "尚未开始",
     "run_stopped": "前面步骤出错后停止，未尝试",
     "task_failed": "任务执行失败",
+    "task_interrupted": "任务进程中断或超时，已停止；请核对结果，不要盲目重发",
 }
 
 

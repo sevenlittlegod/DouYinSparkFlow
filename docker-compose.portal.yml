@@ -1,0 +1,30 @@
+services:
+  account-worker:
+    image: douyinsparkflow:portal
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: douyin-account-worker
+    # Match the host portal service owner, including SQLite rollback journals.
+    user: "${PORTAL_UID:-1000}:${PORTAL_GID:-1000}"
+    environment:
+      HOME: /tmp
+      PYTHONUNBUFFERED: "1"
+    entrypoint: ["python", "-m", "account_worker"]
+    restart: unless-stopped
+    init: true
+    mem_limit: 850m
+    memswap_limit: 1700m
+    pids_limit: 256
+    shm_size: 1gb
+    stop_grace_period: 20s
+    volumes:
+      - ./config/.env:/legacy.env:ro
+      - ./portal-data:/portal-data
+      - ./account-data:/accounts
+      - ./logs:/legacy-logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
