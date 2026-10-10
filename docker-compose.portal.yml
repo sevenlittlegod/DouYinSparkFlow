@@ -23,6 +23,13 @@ services:
       - ./portal-data:/portal-data
       - ./account-data:/accounts
       - ./logs:/legacy-logs
+      # Read-only source overlay lets this small host apply sender checks without
+      # rebuilding the unchanged browser/dependency image during recovery.
+      - ./account_worker:/app/account_worker:ro
+      - ./core:/app/core:ro
+      - ./utils:/app/utils:ro
+      - ./portal:/app/portal:ro
+      - ./docker:/app/docker:ro
     logging:
       driver: json-file
       options:

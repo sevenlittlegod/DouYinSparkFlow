@@ -114,7 +114,7 @@ async function renderAdmin() {
     else card.append(element("p", "邀请已建立，等待账号本人填写。", "muted"));
     if (account.run_status) {
       const result = account.run_status;
-      const labels = {submitted_unverified: "消息已提交", failed: "执行失败", running: "执行中", partial: "部分未完成", success: "完成", worker_failed: "任务未能启动或执行异常", interrupted: "执行中断，请核对后再补跑", configuration_conflict: "与原有账号重复，请停用重复配置"};
+      const labels = {submitted_unverified: "消息已提交（送达未验证）", failed: "执行失败或发送结果待核对", running: "执行中", partial: "部分未完成", success: "完成", worker_failed: "任务未能启动或执行异常", interrupted: "执行中断，请核对后再补跑", configuration_conflict: "与原有账号重复，请停用重复配置"};
       card.append(element("p", `最近执行：${labels[result.status] || result.status || "暂无"} · 已提交 ${result.submitted ?? "—"} / ${result.total ?? "—"}` + (result.updated_at ? " · " + result.updated_at : ""), "run-status"));
     }
     const actions = element("div", undefined, "actions");

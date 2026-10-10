@@ -6,6 +6,7 @@ from utils.config import get_config, get_userData
 from utils import norm
 from core.msg_builder import build_message, build_message_with_openai
 from core.browser import get_browser
+from core.submission import snapshot, confirm_submission, SubmissionUnconfirmed, SubmissionRejected
 from playwright.sync_api import Response, TimeoutError as PlaywrightTimeoutError, expect
 import time
 
@@ -68,7 +69,7 @@ def handle_response(response: Response):
             json_data = response.json()
             # print("\n📦 响应 JSON 数据：")
             # print(json.dumps(json_data, indent=4, ensure_ascii=False))
-            for item in json_data.get("data", []):
+            for item in json_data.get("data") or []:
                 short_id = item.get("short_id")  # short_id
                 unique_id = item.get("unique_id")  # unique_id
                 sec_uid = item.get("sec_uid", "")  # sec_uid 可能不存在，提供默认值为空字符串
@@ -353,6 +354,11 @@ def _do_user_pass(browser, username, cookies, targets, on_result=None):
             except Exception:
                 record_result(target, 'failed', 'conversation_changed')
                 raise RuntimeError('输入后会话标题发生变化，未按发送键。') from None
+            try:
+                before = snapshot(page, message)
+            except Exception:
+                record_result(target, 'failed', 'submission_check_unavailable')
+                raise RuntimeError('发送前无法检查消息区域，未按发送键。') from None
             # 发送只尝试一次；失败或结果不明时停止，避免自动重复发送。
             record_result(target, "unknown", "submission_in_progress")
             try:
@@ -360,10 +366,21 @@ def _do_user_pass(browser, username, cookies, targets, on_result=None):
             except Exception:
                 record_result(target, "unknown", "submission_uncertain")
                 raise
+            try:
+                confirm_submission(page, message, before)
+            except SubmissionRejected:
+                record_result(target, 'failed', 'send_rejected')
+                raise
+            except SubmissionUnconfirmed:
+                record_result(target, 'unknown', 'submission_unconfirmed')
+                raise
+            except Exception:
+                record_result(target, 'unknown', 'submission_unconfirmed')
+                raise RuntimeError('发送后无法核对页面状态，未自动重试。') from None
             submitted_targets.add(target)
             record_result(target, "submitted_unverified")
             logger.info(
-                f"账号 {username} 已对好友 {target} 按下发送键；是否送达请在抖音聊天中确认。"
+                f"账号 {username} 对好友 {target} 的新消息已显示在发送端且输入框已清空；是否送达请在抖音聊天中确认。"
             )
             page.wait_for_timeout(2000)
 

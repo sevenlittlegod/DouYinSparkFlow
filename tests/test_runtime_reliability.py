@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, call, patch
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from core.submission import SubmissionUnconfirmed, SubmissionRejected
 
 import core.tasks as tasks
 
@@ -21,6 +22,8 @@ class RuntimeReliabilityTests(unittest.TestCase):
             patch.object(tasks, "logger"),
             patch.object(tasks, 'open_chat_editor', self.prepare),
             patch.object(tasks, 'check_chat_title'),
+            patch.object(tasks, 'snapshot', return_value={'matches': 0}),
+            patch.object(tasks, 'confirm_submission'),
             patch.dict(tasks.config, {'taskRetryTimes': 1}),
         )
         for replacement in self.patches:
@@ -241,6 +244,24 @@ class RuntimeReliabilityTests(unittest.TestCase):
                 self.run_user(['Bob'], ['Bob'], results)
         self.editor.press.assert_not_called()
         results.assert_called_once_with('Bob', 'failed', 'conversation_changed')
+
+    def test_enter_without_new_message_stops_unknown_and_never_retries(self):
+        results = MagicMock()
+        with patch.object(tasks, 'confirm_submission', side_effect=SubmissionUnconfirmed('not confirmed')):
+            with patch.dict(tasks.config, {'taskRetryTimes': 3}):
+                with self.assertRaises(SubmissionUnconfirmed):
+                    self.run_user(['Bob', 'Carol'], ['Bob', 'Carol'], results)
+        self.editor.press.assert_called_once_with('Enter')
+        self.assertEqual(results.call_args_list[-1], call('Bob', 'unknown', 'submission_unconfirmed'))
+        self.assertFalse(any(c.args[1] == 'submitted_unverified' for c in results.call_args_list))
+
+    def test_explicit_send_failure_is_not_reported_as_submitted(self):
+        results = MagicMock()
+        with patch.object(tasks, 'confirm_submission', side_effect=SubmissionRejected('rejected')):
+            with self.assertRaises(SubmissionRejected):
+                self.run_user(['Bob', 'Carol'], ['Bob', 'Carol'], results)
+        self.editor.press.assert_called_once_with('Enter')
+        self.assertEqual(results.call_args_list[-1], call('Bob', 'failed', 'send_rejected'))
 
 
 if __name__ == "__main__":

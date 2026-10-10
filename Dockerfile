@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r /tmp/portal-requi
 COPY . /app
 
 RUN sed -i 's/\r$//' /app/docker/*.sh \
-    && chmod +x /app/docker/*.sh
+    && chmod +x /app/docker/*.sh \
+    && chmod -R a+rX /app/account_worker /app/core /app/utils /app/portal /app/docker /app/tests
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

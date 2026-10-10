@@ -64,7 +64,9 @@ def parse_cookies(raw):
         if not isinstance(cookie, dict):
             raise ValidationError("Cookie 每一项必须是对象。")
         name, value = cookie.get("name"), cookie.get("value")
-        if not isinstance(name, str) or not re.fullmatch(r"[\w-]{1,120}", name, flags=re.ASCII):
+        # Chromium can export a nameless cookie. Preserve it as the runner does;
+        # it still passes value/domain/path checks and cannot satisfy sessionid.
+        if not isinstance(name, str) or not re.fullmatch(r"[\w-]{0,120}", name, flags=re.ASCII):
             raise ValidationError("Cookie 名称不正确。")
         if not isinstance(value, str) or len(value) > 12000 or any(ord(c) < 32 or ord(c) == 127 for c in value):
             raise ValidationError("Cookie 值格式不正确。")

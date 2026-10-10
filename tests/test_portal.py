@@ -103,6 +103,15 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(ConflictError):
             self.store.enable(self.account_id, 1)
 
+    def test_exported_nameless_cookie_keeps_validation(self):
+        session = {"name": "sessionid", "value": COOKIE}
+        nameless = {"name": "", "value": "browser-export", "domain": ".douyin.com"}
+        self.assertEqual(parse_cookies([session, nameless])[1]['name'], '')
+        for invalid in ([nameless], [session, {**nameless, 'domain': 'other.example'}],
+                        [session, {**nameless, 'value': 'bad\nvalue'}]):
+            with self.assertRaises(ValidationError):
+                parse_cookies(invalid)
+
     def test_cookie_input_forms_and_domain_restrictions(self):
         for raw in (COOKIE, "sessionid=" + COOKIE + "; ttwid=abc", json.dumps({"cookies": [{"name": "sessionid", "value": COOKIE, "url": "https://www.douyin.com", "sameSite": "unspecified"}]})):
             with self.subTest(raw_type=type(raw)):

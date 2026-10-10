@@ -37,6 +37,10 @@ REASON_LABELS = {
     "message_input_failed": "消息输入失败",
     "submission_in_progress": "提交结果不确定，请勿盲目重发",
     "submission_uncertain": "提交结果不确定，请勿盲目重发",
+    "submission_unconfirmed": "未确认发送端新消息，实际发送情况待核对，未自动重发",
+    "send_rejected": "抖音页面显示发送失败或限制，未自动重发",
+    "submission_check_unavailable": "发送前无法检查消息区域，未按发送键",
+    "recipient_reported_not_received": "用户反馈未收到，原按键记录不能证明消息已发出",
     "target_not_found": "网页会话未找到目标",
     "login_or_page_unavailable": "登录失效或页面未加载，请检查",
     "cookie_load_failed": "登录状态无法载入",
@@ -101,7 +105,7 @@ def build_notification(report):
     body = [
         f"任务时间：{_time_label(report.get('updated_at'))}",
         "",
-        "**“已提交”只表示脚本按过发送键，实际送达未验证，请以抖音聊天为准。**",
+        "**“已提交”是发送端记录，实际送达未验证，请以抖音聊天为准。**",
         "",
         "；".join(f"{label} {counts[status]} 人" for status, label in STATUS_LABELS.items()),
     ]
