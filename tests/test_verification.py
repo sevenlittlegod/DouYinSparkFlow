@@ -3,11 +3,11 @@ import os
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from portal.store import Store, AccessError, ValidationError
 from portal.binding import Bindings
-from portal.verification import VerificationBridge, exposed, qr_exposed
+from portal.verification import VerificationBridge, exposed, qr_exposed, verification_page
 
 
 class VerificationCommandTests(unittest.TestCase):
@@ -40,6 +40,36 @@ class VerificationCommandTests(unittest.TestCase):
         with self.store.connect() as db:
             self.assertIsNone(db.execute('SELECT command FROM binding_jobs WHERE id=?',(self.job,)).fetchone()[0])
         self.assertNotIn('123456',json.dumps(self.jobs.get(self.sid,self.job)))
+
+    def test_browser_deadline_matches_countdown_and_rejects_late_click(self):
+        with self.store.connect() as db:
+            db.execute('UPDATE binding_jobs SET browser_deadline=? WHERE id=?',(int(time.time())+5,self.job))
+        self.assertLessEqual(self.jobs.get(self.sid,self.job)['expires_at'],time.time()+5)
+        with patch('portal.binding.time.time',return_value=time.time()+6):
+            self.assertEqual('expired',self.jobs.get(self.sid,self.job)['state'])
+            self.assertFalse(self.jobs.alive(self.job))
+            from portal.store import ConflictError
+            with self.assertRaises(ConflictError): self.jobs.command(self.sid,self.job,'confirm',{'code':'123456'})
+            self.jobs.sweep()
+            with self.store.connect() as db:
+                self.assertEqual('expired',db.execute('SELECT state FROM binding_jobs WHERE id=?',(self.job,)).fetchone()[0])
+
+    def test_action_feedback_does_not_disclose_code(self):
+        self.jobs.command(self.sid,self.job,'confirm',{'code':'123456'})
+        self.assertEqual('queued',self.jobs.get(self.sid,self.job)['action_result'])
+        self.jobs.take_command(self.job);self.jobs.command_result(self.job,'clicked')
+        result=self.jobs.get(self.sid,self.job)
+        self.assertEqual('clicked',result['action_result']);self.assertNotIn('123456',json.dumps(result))
+
+    def test_only_trusted_open_authentication_popup_can_be_shown(self):
+        def page(url, closed=False):
+            result=Mock();result.main_frame.url=url;result.is_closed.return_value=closed;return result
+        primary=page('https://www.douyin.com/chat')
+        popup=page('https://verify.snssdk.com/identity')
+        untrusted=page('https://other.example/identity')
+        closed=page('https://verify.snssdk.com/identity',True)
+        context=Mock(pages=[primary,popup,untrusted,closed])
+        self.assertIs(popup,verification_page(context,primary))
 
 
 @unittest.skipUnless(os.getenv('RUN_BROWSER_TESTS')=='1','Requires container browser')
@@ -80,4 +110,3 @@ class VerificationBrowserTests(unittest.TestCase):
         self.assertFalse(exposed(qr)); self.assertTrue(qr_exposed(qr))
         self.page.evaluate("() => {const p=document.createElement('div');p.style='position:fixed;inset:0;background:white';document.body.append(p)}")
         self.assertFalse(qr_exposed(qr))
-

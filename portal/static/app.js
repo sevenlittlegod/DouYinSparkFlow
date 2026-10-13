@@ -134,12 +134,14 @@ function renderBinding(result) {
     const prefix = editingAdminAccount ? `/admin/accounts/${editingAdminAccount}` : '';
     const src = `${base}/api${prefix}/binding/${result.id}/qr?v=${result.qr_version}`;
     if ($('binding-qr').getAttribute('src') !== src) $('binding-qr').src = src;
+    if (verifying) $('verification-original').href = src;
   }
   if (result) {
     const labels = {queued:'正在排队。扫码与定时发送依次执行，早晨 08:20–09:10 优先保留给定时任务。',starting:'正在启动抖音登录页面，通常需要几十秒。',waiting_scan:'请用本人抖音 App 扫码，并在手机确认登录。',verification:'抖音要求额外身份验证，请按下方页面和按钮完成。',reading:'已登录，正在核对本人身份并读取最近会话。',ready:'账号已核实。请选择好友，再提交配置等待审核。',consumed:'登录凭据已随配置提交审核。',failed:'本次操作未完成。',expired:'本次结果已过期，请重新开始。',cancelled:'已取消本次操作。'};
     $('binding-status').textContent = result.error || labels[result.state] || '请重新开始。';
     const left = Math.max(0, Math.ceil((result.expires_at * 1000 - Date.now()) / 60000));
-    $('binding-expiry').textContent = bindingLive.has(result.state) || ready ? `本次操作及未提交结果将在约 ${left} 分钟后过期。` : '';
+    $('binding-expiry').textContent = bindingLive.has(result.state) || ready ? `${ready ? '本次未提交结果' : '本次扫码 / 验证窗口'}将在约 ${left} 分钟后过期。` : '';
+    if (verifying && result.action_result) $('verification-result').textContent = ({queued:'服务器已接收操作，正在处理。',clicked:'已操作抖音页面，请查看更新后的提示。',page_changed:'验证页面已变化，请按当前提示重新操作。',failed:'抖音页面未能完成这次操作，请查看页面提示后再试。'})[result.action_result] || '';
     if (ready) {
       $('unique-id').value = result.identity.unique_id;
       $('cookies').value = '';
@@ -186,7 +188,8 @@ function renderVerification(view) {
         await ownerApi(`/binding/${binding.id}/command`, {action:operation.id,values});
         for (const field of view.fields || []) { const input=$('verify-'+field.id); if(input) input.value=''; }
         $('verification-result').textContent='操作已提交，请等待抖音验证页面更新；不会自动重复提交。';
-      } finally { verificationBusy=false; }
+      } catch (error) { $('verification-result').textContent='操作未完成：'+error.message; }
+      finally { verificationBusy=false; }
     }));
   }
 }

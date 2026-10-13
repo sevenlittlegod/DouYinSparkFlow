@@ -8,7 +8,16 @@ BUTTONS = {
     'send_code': re.compile(r'^(?:获取|发送|重新获取|重新发送)验证码$'),
     'confirm': re.compile(r'^(?:验证|确认|确定|提交|下一步|完成)$'),
 }
-CHALLENGE = re.compile(r'接收短信|手机刷脸|身份验证|验证身份|安全验证')
+CHALLENGE = re.compile(r'接收短信|刷脸|人脸(?:识别|验证|认证)|身份验证|验证身份|安全验证|扫码(?:完成|进行)?验证')
+
+
+def verification_page(context, primary):
+    # Authentication can open a separate trusted popup. No arbitrary URL or
+    # browser navigation is accepted from the public control endpoint.
+    for candidate in reversed(context.pages):
+        if not candidate.is_closed() and trusted_frame(candidate.main_frame):
+            return candidate
+    return primary
 
 
 def trusted_frame(frame):
@@ -109,6 +118,10 @@ class VerificationBridge:
             if not exposed(self.inputs[key]): return False
             self.inputs[key].fill(value, timeout=3000)
         control = self.actions[command['action']]
+        interactive = control.locator("xpath=ancestor-or-self::*[self::button or @role='button'][1]")
+        if interactive.count() == 1 and exposed(interactive):
+            control = interactive
+        if not control.is_enabled(): return False
         if not exposed(control): return False
         control.click(timeout=5000)
         return True

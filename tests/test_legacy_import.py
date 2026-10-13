@@ -81,4 +81,3 @@ class LegacyImportTests(unittest.TestCase):
         self.assertEqual(['小明','b'],[f['nickname'] for f in config['friends']])
         report={**self.report,'started_at':'2026-10-12T01:00:00+00:00'}
         with self.assertRaises(ValueError): mapped_report(report,config,'a'*32,'2026-10-13')
-

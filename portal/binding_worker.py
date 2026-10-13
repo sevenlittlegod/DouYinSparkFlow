@@ -12,10 +12,10 @@ import time
 from urllib.parse import urlsplit
 
 from account_worker.runner import lock, LOCK_FDS, local_now
-from portal.binding import Bindings
+from portal.binding import Bindings, LOGIN_SECONDS
 from portal.store import Store, ID
 from utils import norm
-from portal.verification import VerificationBridge, qr_exposed
+from portal.verification import VerificationBridge, qr_exposed, verification_page
 
 LIST = '.conversationConversationListwrapper'
 TITLES = '.conversationConversationItemtitle'
@@ -97,7 +97,9 @@ def run_browser(bindings, job):
     verification = VerificationBridge()
     verification_time = 0
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=False)
+        # Web users can only operate the rendered page. Headless mode prevents
+        # native external-app dialogs from blocking invisible browser chrome.
+        browser = playwright.chromium.launch(headless=True)
         try:
             context = browser.new_context(viewport={'width': 1280, 'height': 800})
             context.set_default_timeout(5000)
@@ -105,21 +107,27 @@ def run_browser(bindings, job):
                 context.add_cookies(json.loads(job['cookies']))
             page = context.new_page()
             page.on('response', reader.response)
+            context.on('page', lambda popup: popup.on('response', reader.response))
             page.goto('https://www.douyin.com/chat', wait_until='domcontentloaded', timeout=90000)
-            while alive() and time.monotonic() - started < 720:
+            while alive() and time.monotonic() - started < LOGIN_SECONDS:
                 if urlsplit(page.url).hostname != 'www.douyin.com':
                     raise BindingFailure('page_unavailable')
-                challenge = verification.inspect(page)
+                auth_page = verification_page(context, page)
+                challenge = verification.inspect(auth_page)
+                if auth_page != page and page.locator(LIST).is_visible() and reader.identity:
+                    if not VerificationBridge().inspect(page):
+                        challenge = None
                 if challenge:
                     if time.monotonic() - verification_time > 3:
-                        bindings.update(job['id'], 'verification', qr=verification.screenshot(page), verification=challenge)
+                        bindings.update(job['id'], 'verification', qr=verification.screenshot(auth_page), verification=challenge)
                         verification_time = time.monotonic()
                     command = bindings.take_command(job['id'])
-                    if command:
+                    if command and alive():
                         try:
-                            verification.perform(page, command)
+                            result = verification.perform(auth_page, command)
+                            bindings.command_result(job['id'], 'clicked' if result else 'page_changed')
                         except Exception:
-                            pass  # Human can review the fresh view; never retry an OTP action.
+                            bindings.command_result(job['id'], 'failed')  # Human can review the fresh view; never retry an OTP action.
                         finally:
                             command.clear()
                         verification_time = 0
@@ -197,13 +205,13 @@ def main():
                     with lock(Path(args.legacy_logs) / 'task.lock') as browser_lock:
                         job = bindings.claim() if browser_lock else None
                         if job:
-                            cmd = ['xvfb-run', '-a', '-s', '-screen 0 1280x800x24 -nolisten tcp', sys.executable,
-                                   '-m', 'portal.binding_worker', '--data-dir', args.data_dir, '--job', job['id']]
+                            cmd = [sys.executable, '-m', 'portal.binding_worker',
+                                   '--data-dir', args.data_dir, '--job', job['id']]
                             child = subprocess.Popen(cmd, cwd=Path(__file__).resolve().parents[1],
                                                      start_new_session=True, pass_fds=tuple(LOCK_FDS),
                                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                             try:
-                                child.wait(timeout=810)
+                                child.wait(timeout=LOGIN_SECONDS + 90)
                             except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
                                 os.killpg(child.pid, signal.SIGTERM)
                                 try:
