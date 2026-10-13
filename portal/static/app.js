@@ -73,6 +73,7 @@ function renderOwner(account) {
   $("clear-push").checked = false;
   $("consent").checked = false;
   $("push-saved").textContent = config?.pushplus_configured ? "已配置 · 留空保留" : "未配置";
+  if ($('pushplus-guide')) $('pushplus-guide').open = !config?.pushplus_configured;
   $("owner-status").classList.toggle("pending", !!account.pending);
   $("owner-status").textContent = account.pending
     ? `版本 ${account.revision} 已提交，等待管理员审核。` + (account.enabled ? `\n当前仍按已批准的版本 ${account.active_revision} 执行。` : "\n审核启用前不会发送消息。")
