@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from contextlib import nullcontext
 
 from dotenv import dotenv_values
 from account_worker import runner
@@ -80,6 +81,14 @@ class AccountWorkerTests(unittest.TestCase):
         self.assertFalse(runner.legacy_window(now(9, 10)))
         self.assertFalse(runner.legacy_window(now(8, 29)))
         self.assertTrue(runner.legacy_window(now(23, 55), 0, 10))
+
+    def test_retired_legacy_does_not_delay_nine_oclock_portal_tasks(self):
+        now=datetime(2026,10,13,9,0,tzinfo=runner.ZONE)
+        with patch.object(runner,'local_now',return_value=now), patch.object(runner,'lock',return_value=nullcontext(True)), patch.object(runner,'run_account') as run:
+            runner.tick(self.store,self.ledger,self.root/'logs',legacy_enabled=True)
+            run.assert_not_called()
+            runner.tick(self.store,self.ledger,self.root/'logs',legacy_enabled=False)
+            self.assertEqual(1,run.call_count)
 
     def test_resume_requires_original_revision_and_unfinished_run(self):
         with patch.object(runner, 'execute') as execute:

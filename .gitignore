@@ -10,5 +10,6 @@ usersData.json
 config/
 portal-data/
 account-data/
+private-migrations/
 *.tar.gz
 *.zip

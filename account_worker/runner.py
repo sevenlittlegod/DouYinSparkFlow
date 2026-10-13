@@ -194,9 +194,9 @@ def run_account(store, ledger, account, day, resume=False):
     return True
 
 
-def tick(store, ledger, legacy_logs, legacy_hour=9, legacy_minute=0, only=None, resume=False, protected_ids=()):
+def tick(store, ledger, legacy_logs, legacy_hour=9, legacy_minute=0, only=None, resume=False, protected_ids=(), legacy_enabled=True):
     now = local_now()
-    if legacy_window(now, legacy_hour, legacy_minute):
+    if legacy_enabled and legacy_window(now, legacy_hour, legacy_minute):
         if only:
             raise ValueError('Legacy task has priority now; retry after its reserved window')
         return
@@ -211,7 +211,7 @@ def tick(store, ledger, legacy_logs, legacy_hour=9, legacy_minute=0, only=None, 
             raise ValueError('Account is not enabled')
         for account in accounts:
             now = local_now()
-            if legacy_window(now, legacy_hour, legacy_minute):
+            if legacy_enabled and legacy_window(now, legacy_hour, legacy_minute):
                 break
             if only and account['id'] != only:
                 continue
@@ -259,7 +259,8 @@ def main():
                     legacy = dotenv_values(args.legacy_config, interpolate=False)
                     protected = {a['unique_id'].lower() for a in json.loads(legacy['TASKS'])}
                     tick(store, ledger, args.legacy_logs, args.legacy_hour, args.legacy_minute,
-                         only=only, resume=bool(args.resume_account), protected_ids=protected)
+                         only=only, resume=bool(args.resume_account), protected_ids=protected,
+                         legacy_enabled=bool(protected))
         except KeyboardInterrupt:
             return
         except Exception:

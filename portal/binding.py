@@ -5,7 +5,7 @@ import time
 
 from portal.store import AccessError, ConflictError, ValidationError, digest, parse_cookies
 
-LIVE = ('queued', 'starting', 'waiting_scan', 'reading')
+LIVE = ('queued', 'starting', 'waiting_scan', 'verification', 'reading')
 ERRORS = {
     'expired': '本次操作已过期，请重新开始。',
     'cancelled': '已取消，尚未修改账号配置。',
@@ -32,18 +32,28 @@ class Bindings:
                   friends TEXT, cookies TEXT, partial INTEGER NOT NULL DEFAULT 1, error TEXT);
                 CREATE INDEX IF NOT EXISTS binding_queue ON binding_jobs(state,created);
             ''')
+            columns = {r['name'] for r in db.execute('PRAGMA table_info(binding_jobs)')}
+            for name in ('verification', 'command'):
+                if name not in columns:
+                    db.execute('ALTER TABLE binding_jobs ADD COLUMN ' + name + ' TEXT')
 
     @staticmethod
-    def _owner(db, sid):
-        session = db.execute('SELECT * FROM sessions WHERE token_hash=? AND role=? AND expires_at>?',
-                             (digest(sid), 'owner', int(time.time()))).fetchone()
+    def _owner(db, sid, account_id=None):
+        session = db.execute('SELECT * FROM sessions WHERE token_hash=? AND expires_at>?',
+                             (digest(sid), int(time.time()))).fetchone()
         if not session:
             raise AccessError('请通过本人的邀请链接登录。')
-        return session
+        if session['role'] == 'owner' and (account_id is None or account_id == session['account_id']):
+            return session
+        # An authenticated administrator must explicitly scope the editor to an
+        # existing account. This never grants access to another session's QR job.
+        if session['role'] == 'admin' and account_id and db.execute('SELECT 1 FROM accounts WHERE id=?', (account_id,)).fetchone():
+            return {**dict(session), 'account_id': account_id}
+        raise AccessError('当前登录无权编辑这个账号。')
 
     @staticmethod
-    def _owned(db, sid, job_id):
-        session = Bindings._owner(db, sid)
+    def _owned(db, sid, job_id, account_id=None):
+        session = Bindings._owner(db, sid, account_id)
         row = db.execute('SELECT * FROM binding_jobs WHERE id=? AND account_id=? AND session_hash=?',
                          (job_id, session['account_id'], digest(sid))).fetchone()
         if not row:
@@ -56,34 +66,35 @@ class Bindings:
         state = 'expired' if expired and row['state'] != 'consumed' else row['state']
         ready = state == 'ready'
         return dict(id=row['id'], mode=row['mode'], state=state, expires_at=row['expires'],
-                    qr_version=row['updated'] if state == 'waiting_scan' and row['qr'] else None,
+                    qr_version=row['updated'] if state in ('waiting_scan','verification') and row['qr'] else None,
                     identity=json.loads(row['identity']) if ready and row['identity'] else None,
                     friends=json.loads(row['friends']) if ready and row['friends'] else [],
+                    verification=json.loads(row['verification']) if state == 'verification' and row['verification'] else None,
                     partial=bool(row['partial']),
                     error=ERRORS.get('expired' if state == 'expired' else row['error']))
 
-    def start(self, sid, mode, revision):
+    def start(self, sid, mode, revision, account_id=None):
         if mode not in ('qr', 'saved') or type(revision) is not int:
             raise ValidationError('操作类型或配置版本不正确。')
         now = int(time.time())
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            owner = self._owner(db, sid)
+            owner = self._owner(db, sid, account_id)
             account = db.execute('SELECT * FROM accounts WHERE id=?', (owner['account_id'],)).fetchone()
             if account['revision'] != revision:
                 raise ConflictError('配置已变化，请刷新页面后重新开始。')
-            if db.execute("SELECT 1 FROM binding_jobs WHERE account_id=? AND state IN ('queued','starting','waiting_scan','reading') AND expires>?", (owner['account_id'], now)).fetchone():
+            if db.execute("SELECT 1 FROM binding_jobs WHERE account_id=? AND state IN ('queued','starting','waiting_scan','verification','reading') AND expires>?", (owner['account_id'], now)).fetchone():
                 raise ConflictError('这个账号已有扫码或读取操作，请先完成或取消。')
             if db.execute('SELECT COUNT(*) FROM binding_jobs WHERE account_id=? AND created>?',
                           (owner['account_id'], now - 900)).fetchone()[0] >= 5:
                 raise ValidationError('操作较频繁，请 15 分钟后再试。')
-            if db.execute("SELECT COUNT(*) FROM binding_jobs WHERE state IN ('queued','starting','waiting_scan','reading') AND expires>?", (now,)).fetchone()[0] >= 10:
+            if db.execute("SELECT COUNT(*) FROM binding_jobs WHERE state IN ('queued','starting','waiting_scan','verification','reading') AND expires>?", (now,)).fetchone()[0] >= 10:
                 raise ValidationError('当前等待人数较多，请稍后再试。')
             config = json.loads(account['pending'] or account['active'] or '{}')
             if mode == 'saved' and not config.get('cookies'):
                 raise ValidationError('尚未保存登录，请先扫码绑定。')
             # Replacing a ready result cancels its credential, even across tabs.
-            db.execute("UPDATE binding_jobs SET state='cancelled',cookies=NULL,qr=NULL,friends=NULL,identity=NULL,error='cancelled' WHERE account_id=? AND state='ready'", (owner['account_id'],))
+            db.execute("UPDATE binding_jobs SET state='cancelled',cookies=NULL,qr=NULL,friends=NULL,identity=NULL,verification=NULL,command=NULL,error='cancelled' WHERE account_id=? AND state='ready'", (owner['account_id'],))
             job_id = secrets.token_hex(16)
             db.execute('''INSERT INTO binding_jobs(id,account_id,session_hash,revision,mode,state,created,expires,updated,expected_id,cookies)
                           VALUES(?,?,?,?,?,'queued',?,?,?,?,?)''',
@@ -91,30 +102,30 @@ class Bindings:
                         config.get('unique_id'), json.dumps(config['cookies']) if mode == 'saved' else None))
             return self._public(db.execute('SELECT * FROM binding_jobs WHERE id=?', (job_id,)).fetchone())
 
-    def current(self, sid):
+    def current(self, sid, account_id=None):
         with self.store.connect() as db:
-            owner = self._owner(db, sid)
+            owner = self._owner(db, sid, account_id)
             row = db.execute('SELECT * FROM binding_jobs WHERE account_id=? AND session_hash=? ORDER BY created DESC,rowid DESC LIMIT 1',
                              (owner['account_id'], digest(sid))).fetchone()
             return self._public(row) if row else None
 
-    def get(self, sid, job_id, image=False):
+    def get(self, sid, job_id, image=False, account_id=None):
         with self.store.connect() as db:
-            row = self._owned(db, sid, job_id)
+            row = self._owned(db, sid, job_id, account_id)
             if image:
-                if row['state'] != 'waiting_scan' or row['expires'] <= int(time.time()) or not row['qr']:
+                if row['state'] not in ('waiting_scan','verification') or row['expires'] <= int(time.time()) or not row['qr']:
                     raise ValidationError('二维码尚未就绪或已过期。')
                 return bytes(row['qr'])
             return self._public(row)
 
-    def cancel(self, sid, job_id):
+    def cancel(self, sid, job_id, account_id=None):
         with self.store.connect() as db:
-            self._owned(db, sid, job_id)
-            db.execute("UPDATE binding_jobs SET state='cancelled',error='cancelled',qr=NULL,cookies=NULL,friends=NULL,identity=NULL WHERE id=? AND state!='consumed'", (job_id,))
+            self._owned(db, sid, job_id, account_id)
+            db.execute("UPDATE binding_jobs SET state='cancelled',error='cancelled',qr=NULL,cookies=NULL,friends=NULL,identity=NULL,verification=NULL,command=NULL WHERE id=? AND state!='consumed'", (job_id,))
 
     @staticmethod
     def apply(db, sid, job_id, account_id, revision, payload):
-        row = Bindings._owned(db, sid, job_id)
+        row = Bindings._owned(db, sid, job_id, account_id)
         if row['account_id'] != account_id or row['revision'] != revision:
             raise ConflictError('扫码后配置已变化，请重新扫码或读取。')
         if row['state'] != 'ready' or row['expires'] <= int(time.time()) or not row['cookies']:
@@ -123,15 +134,15 @@ class Bindings:
         if not isinstance(payload, dict) or payload.get('unique_id') != identity['unique_id'] or payload.get('cookies'):
             raise ValidationError('请使用页面核实的抖音号；扫码后无需再粘贴 Cookie。')
         payload = {**payload, 'cookies': json.loads(row['cookies'])}
-        db.execute("UPDATE binding_jobs SET state='consumed',cookies=NULL,qr=NULL,friends=NULL,identity=NULL WHERE id=?", (job_id,))
+        db.execute("UPDATE binding_jobs SET state='consumed',cookies=NULL,qr=NULL,friends=NULL,identity=NULL,verification=NULL,command=NULL WHERE id=?", (job_id,))
         return payload
 
     def sweep(self, restart=False):
         now = int(time.time())
         with self.store.connect() as db:
-            db.execute("UPDATE binding_jobs SET state='expired',error='expired',qr=NULL,cookies=NULL,friends=NULL,identity=NULL WHERE state!='consumed' AND (expires<=? OR NOT EXISTS(SELECT 1 FROM sessions WHERE token_hash=session_hash AND expires_at>?))", (now, now))
+            db.execute("UPDATE binding_jobs SET state='expired',error='expired',qr=NULL,cookies=NULL,friends=NULL,identity=NULL,verification=NULL,command=NULL WHERE state!='consumed' AND (expires<=? OR NOT EXISTS(SELECT 1 FROM sessions WHERE token_hash=session_hash AND expires_at>?))", (now, now))
             if restart:
-                db.execute("UPDATE binding_jobs SET state='failed',error='interrupted',qr=NULL,cookies=NULL,friends=NULL,identity=NULL WHERE state IN ('starting','waiting_scan','reading')")
+                db.execute("UPDATE binding_jobs SET state='failed',error='interrupted',qr=NULL,cookies=NULL,friends=NULL,identity=NULL,verification=NULL,command=NULL WHERE state IN ('starting','waiting_scan','verification','reading')")
             db.execute('DELETE FROM binding_jobs WHERE created<?', (now - 86400,))
 
     def claim(self):
@@ -145,10 +156,10 @@ class Bindings:
 
     def alive(self, job_id):
         with self.store.connect() as db:
-            return bool(db.execute("SELECT 1 FROM binding_jobs j JOIN sessions s ON s.token_hash=j.session_hash WHERE j.id=? AND j.state IN ('starting','waiting_scan','reading') AND j.expires>? AND s.expires_at>?", (job_id, int(time.time()), int(time.time()))).fetchone())
+            return bool(db.execute("SELECT 1 FROM binding_jobs j JOIN sessions s ON s.token_hash=j.session_hash WHERE j.id=? AND j.state IN ('starting','waiting_scan','verification','reading') AND j.expires>? AND s.expires_at>?", (job_id, int(time.time()), int(time.time()))).fetchone())
 
-    def update(self, job_id, state, *, qr=None, identity=None, friends=None, cookies=None, partial=True, error=None):
-        if state not in ('waiting_scan', 'reading', 'ready', 'failed') or (error and error not in ERRORS):
+    def update(self, job_id, state, *, qr=None, identity=None, friends=None, cookies=None, partial=True, error=None, verification=None):
+        if state not in ('waiting_scan', 'verification', 'reading', 'ready', 'failed') or (error and error not in ERRORS):
             raise ValueError('Invalid binding state')
         if qr is not None and (not isinstance(qr, bytes) or len(qr) > 1024 * 1024 or not qr.startswith(b'\x89PNG')):
             raise ValueError('Invalid QR image')
@@ -161,9 +172,42 @@ class Bindings:
                 raise ValueError('Invalid conversation list')
         with self.store.connect() as db:
             # Cancel/expiry/revocation wins races with late browser callbacks.
-            db.execute("""UPDATE binding_jobs SET state=?,updated=?,qr=?,identity=?,friends=?,cookies=?,partial=?,error=?
-                WHERE id=? AND state IN ('starting','waiting_scan','reading') AND expires>?
+            db.execute("""UPDATE binding_jobs SET state=?,updated=?,qr=?,identity=?,friends=?,cookies=?,partial=?,error=?,verification=?
+                WHERE id=? AND state IN ('starting','waiting_scan','verification','reading') AND expires>?
                 AND EXISTS(SELECT 1 FROM sessions WHERE token_hash=session_hash AND expires_at>?)""",
                 (state, int(time.time()), qr, json.dumps(identity) if identity else None,
                  json.dumps(friends) if friends is not None else None,
-                 json.dumps(cookies) if cookies else None, int(partial), error, job_id, int(time.time()), int(time.time())))
+                 json.dumps(cookies) if cookies else None, int(partial), error, json.dumps(verification) if verification else None, job_id, int(time.time()), int(time.time())))
+            if state != 'verification':
+                db.execute('UPDATE binding_jobs SET command=NULL WHERE id=? AND state=?', (job_id, state))
+
+    def command(self, sid, job_id, action, values, account_id=None):
+        import re
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = self._owned(db, sid, job_id, account_id)
+            if row['state'] != 'verification' or row['expires'] <= int(time.time()):
+                raise ConflictError('验证页面已变化，请等待页面更新。')
+            view = json.loads(row['verification'] or '{}')
+            if action not in {a['id'] for a in view.get('actions', [])}:
+                raise ValidationError('当前页面不支持这个验证操作。')
+            fields = {f['id'] for f in view.get('fields', [])}
+            if not isinstance(values, dict) or any(k not in fields for k in values):
+                raise ValidationError('验证字段不正确。')
+            for key,value in values.items():
+                pattern = r'[0-9]{4,8}' if key == 'code' else r'[+0-9 -]{4,20}'
+                if not isinstance(value,str) or not re.fullmatch(pattern,value):
+                    raise ValidationError('请按抖音页面提示填写手机号或数字验证码。')
+            if row['command']:
+                raise ConflictError('上一项验证操作正在处理，请稍候。')
+            db.execute('UPDATE binding_jobs SET command=? WHERE id=?',
+                       (json.dumps({'action':action,'values':values,'expires':int(time.time())+45}),job_id))
+
+    def take_command(self, job_id):
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute("SELECT command FROM binding_jobs WHERE id=? AND state='verification'",(job_id,)).fetchone()
+            if not row or not row['command']: return None
+            db.execute('UPDATE binding_jobs SET command=NULL WHERE id=?',(job_id,))
+            command=json.loads(row['command'])
+            return command if command['expires'] > int(time.time()) else None

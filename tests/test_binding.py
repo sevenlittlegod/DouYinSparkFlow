@@ -135,6 +135,19 @@ class BindingTests(unittest.TestCase):
         self.jobs.update(job['id'], 'reading')
         with self.assertRaises(ValidationError): self.jobs.get(self.sid, job['id'], image=True)
 
+    def test_admin_can_edit_explicit_account_but_jobs_stay_session_scoped(self):
+        admin,_=self.store.new_session('admin')
+        other=self.store.create_invite('另一账号')['account_id']
+        with self.assertRaises(AccessError): self.jobs.start(admin,'qr',0)
+        with self.assertRaises(AccessError): self.jobs.start(self.sid,'qr',0,other)
+        job=self.jobs.start(admin,'qr',0,self.aid); self.jobs.claim()
+        self.jobs.update(job['id'],'ready',identity={'unique_id':'owner_1'},friends=[],cookies=COOKIE)
+        self.assertEqual('ready',self.jobs.get(admin,job['id'],account_id=self.aid)['state'])
+        with self.assertRaises(AccessError): self.jobs.get(admin,job['id'],account_id=other)
+        with self.assertRaises(AccessError): self.jobs.get(self.sid,job['id'],account_id=self.aid)
+        saved=self.store.save(self.aid,config(cookies=''),0,job['id'],admin)
+        self.assertFalse(saved['enabled']);self.assertTrue(saved['pending']['cookies_configured'])
+
 
 class IdentityReaderTests(unittest.TestCase):
     def test_self_identity_only_comes_from_official_profile_response(self):
@@ -170,6 +183,23 @@ class BindingHTTPTests(unittest.TestCase):
     tearDown = portal_tests.HTTPTests.tearDown
     request = portal_tests.HTTPTests.request
     login = portal_tests.HTTPTests.login
+    def test_admin_editor_has_mfa_session_and_csrf_gates(self):
+        invite=self.store.create_invite('管理员配置'); aid=invite['account_id'];route='/spark/api/admin/accounts/'+aid
+        owner,owner_csrf=self.login('owner',invite['token'])
+        self.assertEqual(403,self.request(route,cookie=owner)[0])
+        self.assertEqual(403,self.request(route+'/binding/start',{'mode':'qr','revision':0},owner,owner_csrf)[0])
+        admin,csrf=self.login()
+        self.assertEqual(200,self.request(route,cookie=admin)[0])
+        self.assertEqual(403,self.request(route+'/binding/start',{'mode':'qr','revision':0},admin)[0])
+        status,result,_=self.request(route+'/binding/start',{'mode':'qr','revision':0},admin,csrf)
+        self.assertEqual(200,status);jid=result['binding']['id']
+        self.server.bindings.claim()
+        self.server.bindings.update(jid,'ready',identity={'unique_id':'owner_1'},friends=[],cookies=COOKIE)
+        self.assertEqual(200,self.request(route+'/binding/'+jid,cookie=admin)[0])
+        status,result,_=self.request(route,{'config':config(cookies=''),'revision':0,'binding_id':jid},admin,csrf)
+        self.assertEqual(200,status);self.assertFalse(result['account']['enabled'])
+        self.assertNotIn(COOKIE,json.dumps(result))
+
     def test_binding_routes_enforce_owner_csrf_and_no_secrets(self):
         invite=self.store.create_invite('扫码用户'); cookie,csrf=self.login('owner',invite['token'])
         route='/spark/api/binding/start';payload={'mode':'qr','revision':0}

@@ -136,9 +136,16 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), session["csrf"]):
             raise AccessError("页面凭据已失效，请刷新。")
 
+    def editor_route(self, path):
+        match = re.fullmatch(r'/api/admin/accounts/([0-9a-f]{32})(/binding(?:/.*)?)?', path)
+        if match:
+            self.session(admin=True)
+            return match[1], '/api' + (match[2] or '/account')
+        return None, path
+
     def do_GET(self):
         try:
-            path = self.route()
+            editing_account, path = self.editor_route(self.route())
             if path in ("/", "/admin", "/admin/"):
                 html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__BASE_PATH__", self.server.base_path)
                 return self.finish_response(200, html.encode(), "text/html; charset=utf-8")
@@ -149,17 +156,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/auth/status':
                 return self.finish_response(200, {'configured': self.server.admin_auth.configured()})
             if path == '/api/binding':
-                return self.finish_response(200, {'binding': self.server.bindings.current(self.sid())})
+                return self.finish_response(200, {'binding': self.server.bindings.current(self.sid(), editing_account)})
             match = re.fullmatch(r'/api/binding/([0-9a-f]{32})(/qr)?', path)
             if match:
-                result = self.server.bindings.get(self.sid(), match[1], image=bool(match[2]))
+                result = self.server.bindings.get(self.sid(), match[1], image=bool(match[2]), account_id=editing_account)
                 return self.finish_response(200, result if match[2] else {'binding': result},
                                             'image/png' if match[2] else 'application/json; charset=utf-8')
             if path == "/api/account":
                 session = self.session()
-                if session["role"] != "owner":
+                if not editing_account and session["role"] != "owner":
                     raise AccessError("请通过该账号的邀请链接填写。")
-                return self.finish_response(200, {"account": self.server.store.account(session["account_id"])})
+                return self.finish_response(200, {"account": self.server.store.account(editing_account or session["account_id"])})
             if path == "/api/admin/accounts":
                 self.session(admin=True)
                 return self.finish_response(200, {"accounts": self.server.store.accounts()})
@@ -198,18 +205,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self.finish_response(200, {"session": session}, cookie=self.session_cookie(sid, session["expires_at"]))
             session = self.session(admin=path.startswith("/api/admin/"))
             self.check_csrf(session)
+            editing_account, path = self.editor_route(path)
             if path == "/api/logout":
                 self.server.store.logout(self.sid())
                 return self.finish_response(200, {"ok": True}, cookie=self.session_cookie(""))
             if path == "/api/account":
-                if session["role"] != "owner":
+                if not editing_account and session["role"] != "owner":
                     raise AccessError("仅可保存本人账号。")
-                return self.finish_response(200, {"account": self.server.store.save(session["account_id"], data.get("config"), data.get("revision"), data.get('binding_id'), self.sid())})
+                return self.finish_response(200, {"account": self.server.store.save(editing_account or session["account_id"], data.get("config"), data.get("revision"), data.get('binding_id'), self.sid())})
             if path == '/api/binding/start':
-                return self.finish_response(200, {'binding': self.server.bindings.start(self.sid(), data.get('mode'), data.get('revision'))})
+                return self.finish_response(200, {'binding': self.server.bindings.start(self.sid(), data.get('mode'), data.get('revision'), editing_account)})
+            match = re.fullmatch(r'/api/binding/([0-9a-f]{32})/command', path)
+            if match:
+                self.server.bindings.command(self.sid(), match[1], data.get('action'), data.get('values', {}), editing_account)
+                return self.finish_response(200, {'ok': True})
             match = re.fullmatch(r'/api/binding/([0-9a-f]{32})/cancel', path)
             if match:
-                self.server.bindings.cancel(self.sid(), match[1])
+                self.server.bindings.cancel(self.sid(), match[1], editing_account)
                 return self.finish_response(200, {'ok': True})
             if path == "/api/admin/invites":
                 invite = self.server.store.create_invite(data.get("label"), data.get("days", 7), data.get("account_id"))

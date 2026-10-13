@@ -43,6 +43,7 @@
       <p class="hint">请保存到密码管理器或离线保管。不要与其他人分享。</p><label class="checkbox"><input id="recovery-saved" type="checkbox">我已妥善保存恢复码</label><button id="finish-setup" disabled>进入管理页</button>
     </section>
     <section id="owner" hidden>
+      <a id="back-admin" class="text-link" hidden>← 返回账号管理并审核</a>
       <div id="owner-status" class="status-card"></div>
       <form id="account-form">
         <section class="card"><div class="step-title"><span class="step">01</span><h2>你的抖音账号</h2></div>
@@ -54,6 +55,10 @@
             <div id="binding-panel" hidden>
               <p id="binding-status" role="status" aria-live="polite"></p>
               <img id="binding-qr" class="binding-qr" width="240" height="240" alt="用本人抖音 App 扫描此登录二维码" hidden>
+              <div id="verification-controls" hidden>
+                <p class="hint">按抖音提示选择验证方式。短信验证码请直接填在这里，不要发到聊天中。输入框内容不显示在上方截图里。</p>
+                <div id="verification-fields"></div><div id="verification-actions" class="actions"></div><p id="verification-result" role="status" class="hint"></p>
+              </div>
               <p id="binding-expiry" class="hint"></p><p id="binding-identity" class="verified-identity" hidden></p>
             </div>
             <p class="hint">建议在电脑显示二维码、用手机扫码。二维码过期可取消后重新开始。完成后仍需提交配置，并由管理员批准启用。</p>
@@ -75,7 +80,7 @@
         </section>
         <section class="card"><div class="step-title"><span class="step">03</span><h2>消息与时间</h2></div>
           <label for="message">每天发送的内容</label><textarea id="message" rows="4" maxlength="2000" required placeholder="今日自动续火花[赞]"></textarea><p class="hint">可以直接换行。填写 [API] 可插入每日一言。</p>
-          <label for="time">每天执行时间</label><div class="time-row"><input id="time" type="time" required value="09:00"><span class="muted">北京时间 · Asia/Shanghai</span></div><p class="hint">到点后按队列执行。当前服务器 08:30–09:10 优先运行原有任务；此时段的新账号会在 09:10 后排队。审核通过时若已过今天设定时间，可能当天尽快开始执行。</p>
+          <label for="time">每天执行时间</label><div class="time-row"><input id="time" type="time" required value="09:00"><span class="muted">北京时间 · Asia/Shanghai</span></div><p class="hint">到点后按队列执行，其他账号或扫码正在运行时会顺延。审核通过时若已过今天设定时间，可能当天尽快开始执行；当天已有执行记录则不会自动重复发送。</p>
         </section>
         <section class="card"><div class="step-title"><span class="step">04</span><h2>微信结果通知 <span class="optional">可选</span></h2></div>
           <label for="pushplus">PushPlus Token <span id="push-saved" class="saved"></span></label><input id="pushplus" type="password" maxlength="128" autocomplete="off" placeholder="从自己的 PushPlus 账户复制"><p class="hint">运行结束后通知成功、失败及未完成情况。使用你自己的 Token；保存后不会回显，留空保留现有配置。</p><label class="checkbox"><input type="checkbox" id="clear-push">关闭并移除已保存的微信通知</label>
@@ -84,7 +89,7 @@
       </form>
     </section>
     <section id="admin" hidden>
-      <div class="status-card">这里只显示通过网页接入的账号。原服务器配置中的账号继续独立运行。</div>
+      <div class="status-card">在这里编辑账号、更新抖音登录并审核配置。不同账号分别保存好友名单和微信通知，任务依次执行。</div>
       <section class="card"><h2>邀请一个新账号</h2><form id="invite-form"><label for="invite-label">账号备注</label><input id="invite-label" required maxlength="60" placeholder="例如：小王的续火花"><div class="form-row"><div><label for="invite-days">邀请有效期</label><select id="invite-days"><option value="7">7 天</option><option value="1">1 天</option><option value="30">30 天</option></select></div><button type="submit">生成邀请链接</button></div></form><div id="invite-result" hidden><label for="invite-url">复制后发给账号本人</label><textarea id="invite-url" rows="3" readonly></textarea><button id="copy-invite" class="secondary">复制链接</button><p class="hint">链接持有人可编辑这个账号，请私下发送。链接只在创建时展示；丢失后可重新生成。</p></div></section>
       <div class="section-head"><h2>账号与待审核配置</h2><button id="refresh" class="quiet">刷新状态</button></div><div id="accounts"></div>
     </section>

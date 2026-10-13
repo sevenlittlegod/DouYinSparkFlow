@@ -15,12 +15,13 @@ from account_worker.runner import lock, LOCK_FDS, local_now
 from portal.binding import Bindings
 from portal.store import Store, ID
 from utils import norm
+from portal.verification import VerificationBridge, qr_exposed
 
 LIST = '.conversationConversationListwrapper'
 TITLES = '.conversationConversationItemtitle'
 # The QR selector is verified against the public login page; never screenshot
 # the full browser, chat panel, verification form, or another account's content.
-QR = 'img.RhjdbXj8'
+QR = 'img[aria-label="二维码"],img.RhjdbXj8'
 
 
 class BindingFailure(Exception):
@@ -93,6 +94,8 @@ def run_browser(bindings, job):
     started = time.monotonic()
     reader = IdentityReader()
     qr_hash, qr_time = None, 0
+    verification = VerificationBridge()
+    verification_time = 0
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=False)
         try:
@@ -103,9 +106,25 @@ def run_browser(bindings, job):
             page = context.new_page()
             page.on('response', reader.response)
             page.goto('https://www.douyin.com/chat', wait_until='domcontentloaded', timeout=90000)
-            while alive() and time.monotonic() - started < 420:
+            while alive() and time.monotonic() - started < 720:
                 if urlsplit(page.url).hostname != 'www.douyin.com':
                     raise BindingFailure('page_unavailable')
+                challenge = verification.inspect(page)
+                if challenge:
+                    if time.monotonic() - verification_time > 3:
+                        bindings.update(job['id'], 'verification', qr=verification.screenshot(page), verification=challenge)
+                        verification_time = time.monotonic()
+                    command = bindings.take_command(job['id'])
+                    if command:
+                        try:
+                            verification.perform(page, command)
+                        except Exception:
+                            pass  # Human can review the fresh view; never retry an OTP action.
+                        finally:
+                            command.clear()
+                        verification_time = 0
+                    page.wait_for_timeout(1000)
+                    continue
                 if page.locator(LIST).is_visible() and reader.identity:
                     if job['expected_id'] and job['expected_id'].lower() != reader.identity['unique_id'].lower():
                         raise BindingFailure('identity_mismatch')
@@ -119,7 +138,7 @@ def run_browser(bindings, job):
                     return
                 # Only the genuine QR image is exported. No browser-control API.
                 qr = page.locator(QR)
-                if qr.count() == 1 and qr.is_visible():
+                if qr.count() == 1 and qr_exposed(qr):
                     if job['mode'] == 'saved':
                         raise BindingFailure('login_required')
                     if time.monotonic() - qr_time > 4:
@@ -171,8 +190,8 @@ def main():
         while True:
             try:
                 bindings.sweep()
-                # An interactive login lasts at most eight minutes; leave room
-                # before the legacy priority window, and never compete with sends.
+                # Bound interactive login time and leave room before the morning
+                # sending schedule. The shared lock prevents competing browsers.
                 minute = local_now().hour * 60 + local_now().minute
                 if not 8 * 60 + 20 <= minute < 9 * 60 + 10:
                     with lock(Path(args.legacy_logs) / 'task.lock') as browser_lock:
@@ -184,7 +203,7 @@ def main():
                                                      start_new_session=True, pass_fds=tuple(LOCK_FDS),
                                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                             try:
-                                child.wait(timeout=510)
+                                child.wait(timeout=810)
                             except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
                                 os.killpg(child.pid, signal.SIGTERM)
                                 try:

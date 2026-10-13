@@ -4,6 +4,7 @@
 config/
 portal-data/
 account-data/
+private-migrations/
 .venv/
 .portal-venv/
 *.tar.gz

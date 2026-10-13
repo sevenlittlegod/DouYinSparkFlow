@@ -4,9 +4,12 @@ const $ = id => document.getElementById(id);
 let session = null;
 let currentAccount = null;
 let setupToken = null;
+let editingAdminAccount = null;
 let binding = null, bindingTimer = null;
+let verificationSignature = '';
+let verificationBusy = false;
 let selectedFriends = new Set();
-const bindingLive = new Set(['queued', 'starting', 'waiting_scan', 'reading']);
+const bindingLive = new Set(['queued', 'starting', 'waiting_scan', 'verification', 'reading']);
 
 function notice(message, error = false) {
   $("notice").textContent = message;
@@ -28,6 +31,10 @@ async function api(path, data) {
   catch { throw new Error("服务暂时不可用，请稍后重试。"); }
   if (!response.ok) throw new Error(result.error || "操作未完成，请重试。");
   return result;
+}
+
+function ownerApi(path = '', data) {
+  return api(editingAdminAccount ? `/admin/accounts/${editingAdminAccount}${path}` : (path || '/account'), data);
 }
 
 function element(tag, text, className) {
@@ -117,14 +124,19 @@ function renderBinding(result) {
   $('cookies').disabled = ready;
   $('binding-identity').hidden = !ready;
   $('conversation-picker').hidden = !ready;
-  $('binding-qr').hidden = result?.state !== 'waiting_scan' || !result?.qr_version;
+  const verifying = result?.state === 'verification';
+  $('binding-qr').classList.toggle('verification-view', verifying);
+  $('binding-qr').alt = verifying ? '抖音身份验证页面，输入框已遮挡' : '用本人抖音 App 扫描此登录二维码';
+  $('binding-qr').hidden = !['waiting_scan','verification'].includes(result?.state) || !result?.qr_version;
+  renderVerification(verifying ? result.verification : null);
   if ($('binding-qr').hidden) $('binding-qr').removeAttribute('src');
   else {
-    const src = `${base}/api/binding/${result.id}/qr?v=${result.qr_version}`;
+    const prefix = editingAdminAccount ? `/admin/accounts/${editingAdminAccount}` : '';
+    const src = `${base}/api${prefix}/binding/${result.id}/qr?v=${result.qr_version}`;
     if ($('binding-qr').getAttribute('src') !== src) $('binding-qr').src = src;
   }
   if (result) {
-    const labels = {queued:'正在排队。扫码与定时发送依次执行，早晨 08:20–09:10 优先保留给定时任务。',starting:'正在启动抖音登录页面，通常需要几十秒。',waiting_scan:'请用本人抖音 App 扫码，并在手机确认登录。',reading:'已登录，正在核对本人身份并读取最近会话。',ready:'账号已核实。请选择好友，再提交配置等待审核。',consumed:'登录凭据已随配置提交审核。',failed:'本次操作未完成。',expired:'本次结果已过期，请重新开始。',cancelled:'已取消本次操作。'};
+    const labels = {queued:'正在排队。扫码与定时发送依次执行，早晨 08:20–09:10 优先保留给定时任务。',starting:'正在启动抖音登录页面，通常需要几十秒。',waiting_scan:'请用本人抖音 App 扫码，并在手机确认登录。',verification:'抖音要求额外身份验证，请按下方页面和按钮完成。',reading:'已登录，正在核对本人身份并读取最近会话。',ready:'账号已核实。请选择好友，再提交配置等待审核。',consumed:'登录凭据已随配置提交审核。',failed:'本次操作未完成。',expired:'本次结果已过期，请重新开始。',cancelled:'已取消本次操作。'};
     $('binding-status').textContent = result.error || labels[result.state] || '请重新开始。';
     const left = Math.max(0, Math.ceil((result.expires_at * 1000 - Date.now()) / 60000));
     $('binding-expiry').textContent = bindingLive.has(result.state) || ready ? `本次操作及未提交结果将在约 ${left} 分钟后过期。` : '';
@@ -144,11 +156,46 @@ function renderBinding(result) {
   bindingButtons();
 }
 
+
+function renderVerification(view) {
+  $('verification-controls').hidden = !view;
+  const signature = JSON.stringify(view);
+  if (signature === verificationSignature) return;
+  verificationSignature = signature;
+  $('verification-fields').replaceChildren(); $('verification-actions').replaceChildren();
+  if (!view) return;
+  for (const field of view.fields || []) {
+    const id = 'verify-' + field.id;
+    const label = element('label',field.label); label.htmlFor = id;
+    const input = document.createElement('input'); input.id=id; input.type=field.id === 'code' ? 'password' : 'tel';
+    input.inputMode='numeric'; input.autocomplete='off'; input.maxLength=field.id === 'code' ? 8 : 20;
+    input.placeholder=field.placeholder || field.label;
+    $('verification-fields').append(label,input);
+  }
+  for (const operation of view.actions || []) {
+    $('verification-actions').append(action(operation.label, async () => {
+      if (verificationBusy || binding?.state !== 'verification') return;
+      verificationBusy = true;
+      $('verification-result').textContent = '正在提交给抖音，请等待页面更新。';
+      const values = {};
+      for (const field of view.fields || []) {
+        const input = $('verify-' + field.id);
+        if (input?.value.trim()) values[field.id]=input.value.trim();
+      }
+      try {
+        await ownerApi(`/binding/${binding.id}/command`, {action:operation.id,values});
+        for (const field of view.fields || []) { const input=$('verify-'+field.id); if(input) input.value=''; }
+        $('verification-result').textContent='操作已提交，请等待抖音验证页面更新；不会自动重复提交。';
+      } finally { verificationBusy=false; }
+    }));
+  }
+}
+
 function scheduleBindingPoll() {
   clearTimeout(bindingTimer);
   if (!binding || ![...bindingLive, 'ready'].includes(binding.state)) return;
   bindingTimer = setTimeout(async () => {
-    try { renderBinding((await api(`/binding/${binding.id}`)).binding); scheduleBindingPoll(); }
+    try { renderBinding((await ownerApi(`/binding/${binding.id}`)).binding); scheduleBindingPoll(); }
     catch (error) { $('binding-status').textContent = error.message + ' 刷新页面可重新查看。'; }
   }, binding.state === 'ready' ? 15000 : 2500);
 }
@@ -157,7 +204,7 @@ async function startBinding(mode) {
   if (!$('binding-consent').checked) return;
   $('start-binding').disabled = true; $('read-friends').disabled = true;
   try {
-    renderBinding((await api('/binding/start', {mode, revision:currentAccount.revision})).binding);
+    renderBinding((await ownerApi('/binding/start', {mode, revision:currentAccount.revision})).binding);
     scheduleBindingPoll();
   } catch (error) { notice(error.message, true); bindingButtons(); }
 }
@@ -197,7 +244,7 @@ async function renderAdmin() {
     title.append(element("span", account.pending ? "待审核" : account.enabled ? "已启用" : "未启用", "badge " + (account.pending ? "pending" : account.enabled ? "enabled" : "")));
     card.append(title, element("div", `配置版本 ${account.revision} · ` + (account.enabled ? `运行版本 ${account.active_revision}` : "定时执行已关闭"), "account-meta"));
     if (account.pending) {
-      card.append(element("p", `以下是待审核版本 ${account.revision}。批准后进入定时队列；若已过今天设定时间，可能当天尽快执行。08:30–09:10 优先运行原有任务。`, "muted"), configDetails(account.pending));
+      card.append(element("p", `以下是待审核版本 ${account.revision}。批准后进入定时队列；若已过今天设定时间，可能当天尽快执行。多个账号会依次排队。`, "muted"), configDetails(account.pending));
       if (account.active) {
         const old = element("details"); old.append(element("summary", `对照已批准版本 ${account.active_revision}`), configDetails(account.active)); card.append(old);
       }
@@ -209,6 +256,8 @@ async function renderAdmin() {
       card.append(element("p", `最近执行：${labels[result.status] || result.status || "暂无"} · 已提交 ${result.submitted ?? "—"} / ${result.total ?? "—"}` + (result.updated_at ? " · " + result.updated_at : ""), "run-status"));
     }
     const actions = element("div", undefined, "actions");
+    const edit = element('a', '编辑 / 重新登录', 'edit-account');
+    edit.href = `${base}/admin?account=${account.id}`; actions.append(edit);
     if (account.pending) actions.append(action(`批准版本 ${account.revision} 并启用`, async () => {
       if (!confirm(`已核对“${account.pending.username}”的本人抖音号、好友和消息内容？\n批准版本 ${account.revision} 后，服务器将排队自动发送。若已过今天的设定时间，可能当天尽快执行。`)) return;
       await api(`/admin/accounts/${account.id}/approve`, {revision: account.revision}); await renderAdmin(); notice("已批准启用。若今天尚未执行且设定时间已过，会尽快排队运行。");
@@ -241,7 +290,15 @@ async function renderAdmin() {
 async function showPage() {
   for (const id of ["welcome", "admin-login", "auth-setup", "auth-recovery", "owner", "admin"]) $(id).hidden = true;
   $("logout").hidden = !session;
-  if (session?.role === "admin") {
+  $('back-admin').hidden = true;
+  const requestedAccount = new URLSearchParams(location.search).get('account');
+  editingAdminAccount = session?.role === 'admin' && /^[0-9a-f]{32}$/.test(requestedAccount || '') ? requestedAccount : null;
+  if (editingAdminAccount) {
+    $('heading').textContent = '编辑账号'; $('intro').textContent = '更新抖音登录和好友名单，提交后审核启用。';
+    $('back-admin').hidden = false; $('back-admin').href = base + '/admin';
+    $('owner').hidden = false; renderOwner((await ownerApi()).account);
+    renderBinding((await ownerApi('/binding')).binding); scheduleBindingPoll();
+  } else if (session?.role === "admin") {
     $("heading").textContent = "账号管理"; $("intro").textContent = "发出邀请，核对配置，再批准启用。";
     $("admin").hidden = false; await renderAdmin();
   } else if (location.pathname.replace(/\/$/, "").endsWith("/admin")) {
@@ -307,9 +364,9 @@ $("account-form").addEventListener("submit", async event => {
     const config = {username: $("username").value, unique_id: $("unique-id").value, cookies: $("cookies").value,
       friends: $("friends").value, message: $("message").value, hour, minute,
       pushplus_token: $("pushplus").value.trim(), clear_pushplus: $("clear-push").checked};
-    const saved = await api("/account", {config, revision: currentAccount.revision, binding_id: binding?.state === 'ready' ? binding.id : undefined});
+    const saved = await ownerApi("", {config, revision: currentAccount.revision, binding_id: binding?.state === 'ready' ? binding.id : undefined});
     clearTimeout(bindingTimer); renderBinding(null); renderOwner(saved.account);
-    notice("配置已提交，等待管理员审核。修改后的版本尚未启用。"); window.scrollTo({top: 0, behavior: "smooth"});
+    notice(editingAdminAccount ? "配置已提交。请返回账号管理，核对并批准新版本。" : "配置已提交，等待管理员审核。修改后的版本尚未启用。"); window.scrollTo({top: 0, behavior: "smooth"});
   } catch (error) { notice(error.message, true); $("notice").scrollIntoView({block: "center"}); }
   finally { $("save").disabled = false; }
 });
@@ -330,7 +387,7 @@ $('read-friends').addEventListener('click', () => startBinding('saved'));
 $('friend-search').addEventListener('input', renderConversations);
 $('cancel-binding').addEventListener('click', async () => {
   if (!binding) return;
-  try { await api(`/binding/${binding.id}/cancel`, {}); clearTimeout(bindingTimer); renderBinding((await api(`/binding/${binding.id}`)).binding); }
+  try { await ownerApi(`/binding/${binding.id}/cancel`, {}); clearTimeout(bindingTimer); renderBinding((await ownerApi(`/binding/${binding.id}`)).binding); }
   catch (error) { notice(error.message, true); }
 });
 $('apply-friends').addEventListener('click', () => {
