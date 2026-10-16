@@ -3,6 +3,7 @@ import unittest
 
 from playwright.sync_api import sync_playwright
 from core.submission import snapshot, confirm_submission, SubmissionUnconfirmed, SubmissionRejected
+from core.message_input import type_message
 
 
 @unittest.skipUnless(os.getenv('RUN_BROWSER_TESTS') == '1', 'Requires the container browser runtime')
@@ -35,6 +36,39 @@ class SubmissionConfirmationTests(unittest.TestCase):
         self.page.locator('#editor').press('Enter')
         with self.assertRaises(SubmissionUnconfirmed):
             confirm_submission(self.page, 'hello', before, timeout_ms=300)
+
+    def test_multiline_quote_stays_in_draft_until_one_explicit_send(self):
+        self.clear()
+        self.page.evaluate('''() => {
+            window.sent = [];
+            document.querySelector('#editor').addEventListener('keydown', event => {
+                if (event.key !== 'Enter' || event.shiftKey) return;
+                event.preventDefault();
+                const editor = event.currentTarget;
+                const text = editor.innerText;
+                window.sent.push(text);
+                const row = document.createElement('div');
+                row.className = 'messageMessageBoxmessageBox';
+                const box = document.createElement('div');
+                box.className = 'messageMessageBoxcontentBox messageMessageBoxisFromMe';
+                const body = document.createElement('div');
+                body.className = 'TextMessageTexttextInnerContent';
+                body.textContent = text;
+                box.append(body); row.append(box);
+                document.querySelector('#messages').append(row);
+                editor.textContent = '';
+            });
+        }''')
+        message = '自动续火花[赞]\\n每日一言\n示例引用。\r\n\r出处'
+        expected = '自动续火花[赞]\n每日一言\n示例引用。\n\n出处'
+        editor = self.page.locator('#editor')
+        type_message(editor, message)
+        self.assertEqual(self.page.evaluate('window.sent'), [])
+        self.assertEqual(editor.inner_text(), expected)
+        before = snapshot(self.page, message)
+        editor.press('Enter')
+        self.assertEqual(self.page.evaluate('window.sent'), [expected])
+        confirm_submission(self.page, message, before, timeout_ms=2500)
 
     def test_old_identical_message_is_not_new_submission(self):
         self.bubble()

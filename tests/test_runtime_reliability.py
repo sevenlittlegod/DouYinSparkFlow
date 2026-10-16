@@ -64,6 +64,19 @@ class RuntimeReliabilityTests(unittest.TestCase):
         tasks.logger.info.assert_not_called()
         self.context.close.assert_called_once()
 
+    def test_quote_line_breaks_never_type_enter_before_submission_check(self):
+        tasks.build_message.return_value = '正文\\n一言\n出处\r\n作者\r\n\r末行'
+        events = []
+        self.editor.type.side_effect = lambda text: events.append(('type', text))
+        self.editor.press.side_effect = lambda key: events.append(('press', key))
+        tasks.snapshot.side_effect = lambda *args: events.append(('snapshot', None)) or {'matches': 0}
+        self.run_user(['Bob'], ['Bob'])
+        typed = [value for action, value in events if action == 'type']
+        self.assertEqual(typed, ['正文', '一言', '出处', '作者', '', '末行'])
+        self.assertEqual(events[-2:], [('snapshot', None), ('press', 'Enter')])
+        self.assertEqual(events.count(('press', 'Enter')), 1)
+        self.assertEqual(events.count(('press', 'Shift+Enter')), 5)
+
     def test_list_timeout_explains_login_and_page_changes(self):
         self.page.wait_for_selector.side_effect = PlaywrightTimeoutError('list timed out')
         with self.assertRaisesRegex(RuntimeError, 'Cookie.*页面结构'):

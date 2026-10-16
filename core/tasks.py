@@ -5,6 +5,7 @@ from utils.logger import setup_logger
 from utils.config import get_config, get_userData
 from utils import norm
 from core.msg_builder import build_message, build_message_with_openai
+from core.message_input import type_message
 from core.browser import get_browser
 from core.submission import snapshot, confirm_submission, SubmissionUnconfirmed, SubmissionRejected
 from playwright.sync_api import Response, TimeoutError as PlaywrightTimeoutError, expect
@@ -335,15 +336,11 @@ def _do_user_pass(browser, username, cookies, targets, on_result=None):
                 raise RuntimeError('会话已有草稿，请核对后再运行；尚未按发送键。')
             try:
                 message = build_message()
-                lines = message.split("\\n")
             except Exception:
                 record_result(target, "failed", "message_build_failed")
                 raise
             try:
-                for index, line in enumerate(lines):
-                    chat_input.type(line)
-                    if index < len(lines) - 1:
-                        chat_input.press("Shift+Enter")
+                type_message(chat_input, message)
             except Exception:
                 record_result(target, "failed", "message_input_failed")
                 raise
