@@ -263,6 +263,18 @@ def wait_for_chat_selector(page, selector, username):
         ) from None
 
 
+def open_chat_page(page, username):
+    """Retry page readiness only, before opening an editor or entering a message."""
+    def load():
+        # A slow deferred resource can block DOMContentLoaded after chat is usable.
+        # The visible conversation list, not the document event, gates this task.
+        page.goto('https://www.douyin.com/chat', wait_until='commit')
+        page.wait_for_timeout(5000)  # Allow identity response callbacks to run.
+        wait_for_chat_selector(page, CONVERSATION_LIST_SELECTOR, username)
+
+    retry_operation('加载抖音聊天列表', load, retries=config['taskRetryTimes'], delay=5)
+
+
 def _do_user_pass(browser, username, cookies, targets, on_result=None):
     if not targets:
         raise ValueError(f"账号 {username} 没有配置目标好友。")
@@ -304,16 +316,7 @@ def _do_user_pass(browser, username, cookies, targets, on_result=None):
             ) from None
 
         try:
-            retry_operation(
-                "打开抖音网页聊天页面",
-                page.goto,
-                retries=config["taskRetryTimes"],
-                delay=5,
-                url="https://www.douyin.com/chat",
-                wait_until="domcontentloaded",
-            )
-            page.wait_for_timeout(5000)  # 等待时处理身份接口回调。
-            wait_for_chat_selector(page, CONVERSATION_LIST_SELECTOR, username)
+            open_chat_page(page, username)
         except Exception:
             record_unattempted("login_or_page_unavailable")
             raise

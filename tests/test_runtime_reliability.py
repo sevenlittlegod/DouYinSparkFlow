@@ -190,6 +190,31 @@ class RuntimeReliabilityTests(unittest.TestCase):
         ])
         self.editor.press.assert_not_called()
 
+    def test_transient_list_failure_retries_before_typing_and_sends_once(self):
+        self.page.wait_for_selector.side_effect = [PlaywrightTimeoutError('temporary list failure'), None]
+        events = []
+        self.page.goto.side_effect = lambda *args, **kwargs: events.append('load')
+        self.editor.type.side_effect = lambda text: events.append('type')
+        self.editor.press.side_effect = lambda key: events.append(key)
+        with patch.dict(tasks.config, {'taskRetryTimes': 3}):
+            self.run_user(['Bob'], ['Bob'])
+        self.assertEqual(events, ['load', 'load', 'type', 'Enter'])
+        self.assertEqual(self.page.goto.call_args_list, [
+            call('https://www.douyin.com/chat', wait_until='commit'),
+            call('https://www.douyin.com/chat', wait_until='commit'),
+        ])
+
+    def test_persistent_list_failure_stops_after_bounded_pre_send_retries(self):
+        results = MagicMock()
+        self.page.wait_for_selector.side_effect = PlaywrightTimeoutError('list unavailable')
+        with patch.dict(tasks.config, {'taskRetryTimes': 3}):
+            with self.assertRaises(RuntimeError):
+                self.run_user(['Bob'], ['Bob'], results)
+        self.assertEqual(self.page.goto.call_count, 3)
+        self.editor.type.assert_not_called()
+        self.editor.press.assert_not_called()
+        results.assert_called_once_with('Bob', 'not_attempted', 'login_or_page_unavailable')
+
     def test_cookie_failure_reports_safe_reason_without_sending(self):
         results = MagicMock()
         self.context.add_cookies.side_effect = ValueError("PRIVATE_COOKIE_VALUE")
