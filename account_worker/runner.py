@@ -21,6 +21,7 @@ from dotenv import dotenv_values
 
 from portal.store import Store
 from utils.dotenv_writer import write_config
+from utils.task_report import TaskReport, prepare_resume
 
 ZONE = ZoneInfo('Asia/Shanghai')
 TIMEOUT = 25 * 60
@@ -167,22 +168,27 @@ def run_account(store, ledger, account, day, resume=False):
             raise ValueError('Cannot resume: original configuration/report missing')
     elif not ledger.claim(account, day):
         return False
+    return execute_claimed(store, ledger, account, day, folder / '.env', resume=resume, write_snapshot=not resume)
+
+
+def execute_claimed(store, ledger, account, day, config_path, *, resume, write_snapshot):
+    folder = config_path.parent
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Claim before launch and retain even on crash. A restart cannot blindly resend.
     store.update_run_status(account['id'], {'status': 'running', 'started_at': datetime.now(timezone.utc).isoformat()})
     try:
-        if not resume:
-            write_config(folder / '.env', account_values(account))
-        result = execute(folder / '.env', folder, resume=resume)
+        if write_snapshot:
+            write_config(config_path, account_values(account))
+        result = execute(config_path, folder, resume=resume)
     except KeyboardInterrupt:
         result = 130
     except Exception:
         result = 1
-    if result != 0 and (folder / '.env').is_file():
+    if result != 0 and config_path.is_file():
         # Runtime checks its persisted notification marker and skips any prior
         # attempt, including uncertain delivery. This path never opens Douyin.
         try:
-            execute(folder / '.env', folder, action='notify-interrupted', timeout=45)
+            execute(config_path, folder, action='notify-interrupted', timeout=45)
         except Exception:
             pass
     summary = summarize(folder / 'last-run.json', result)
@@ -192,6 +198,111 @@ def run_account(store, ledger, account, day, resume=False):
     if result == 130:
         raise KeyboardInterrupt
     return True
+
+
+def prepare_manual_resume(folder, account, original_revision, now):
+    """Validate the active daily report against its private input before touching either."""
+    report = TaskReport.open_existing(folder / 'last-run.json')
+    if report.data.get('status') != 'failed' or report.data.get('error') == 'task_interrupted':
+        return 'invalid_report'
+    baseline = folder / '.env'
+    roster_revision = report.data.get('manual_roster_revision')
+    if roster_revision is not None:
+        if type(roster_revision) is not int or roster_revision < 1:
+            return 'invalid_report'
+        baseline = folder / f'.manual-{roster_revision}.env'
+    original, = json.loads(dotenv_values(baseline, interpolate=False)['TASKS'])
+    values = account_values(account)
+    expected, = json.loads(values['TASKS'])
+    if (original['unique_id'] != expected['unique_id'] or len(report.data['accounts']) != 1 or
+            not isinstance(original['targets'], list) or not original['targets'] or
+            len(set(original['targets'])) != len(original['targets'])):
+        return 'invalid_report'
+    previous, pending = prepare_resume(report.path, [original], ZONE.key, now)
+    # The runtime archives this report by timestamp before it executes a resume.
+    stamp = datetime.fromisoformat(previous['updated_at']).strftime('%Y%m%dT%H%M%S%f')
+    if set(original['targets']) == set(expected['targets']):
+        return None if pending else 'no_safe_targets'
+    if (roster_revision or original_revision) == account['revision']:
+        return 'invalid_report'
+
+    rows = previous['accounts'][0]['targets']
+    login_failures = {'login_or_page_unavailable', 'cookie_load_failed'}
+    if not rows or any(r['status'] != 'not_attempted' or r.get('reason') not in login_failures for r in rows):
+        return 'configuration_changed'
+
+    # Every original target stopped before any chat was opened. The newly approved
+    # roster may be used once. Publish its input before atomically switching reports.
+    # A crash leaves either the old pair or the new pair available for reconciliation.
+    write_config(folder / f".manual-{account['revision']}.env", values)
+    archive = folder / f'before-manual-roster-{stamp}.json'
+    try:
+        os.link(report.path, archive)
+    except FileExistsError:
+        if not archive.samefile(report.path):
+            return 'invalid_report'
+    existing = {row['target']: row for row in rows}
+    targets = []
+    for friend in account['config']['friends']:
+        target = friend['douyin_id']
+        targets.append(existing.get(target, {
+            'target': target, 'label': friend['nickname'], 'status': 'not_attempted', 'reason': 'not_started',
+        }))
+    report.data['accounts'] = [{**expected, 'targets': targets}]
+    report.data['manual_roster_revision'] = account['revision']
+    report.save()
+    return None
+
+
+def run_manual_request(store, ledger, request, protected_ids):
+    now = local_now()
+    day = now.date().isoformat()
+    if request['day'] != day:
+        return 'expired'
+    account = next((a for a in store.active_accounts() if a['id'] == request['account_id']), None)
+    if account is None or account['config']['unique_id'].lower() in protected_ids:
+        return 'unavailable'
+    if account['revision'] != request['revision']:
+        return 'configuration_changed'
+
+    previous = ledger.lookup(account['id'], day)
+    if previous is None:
+        run_account(store, ledger, account, day)
+    else:
+        revision, status = previous
+        if status == 'submitted_unverified':
+            return 'already_complete'
+        if status != 'failed':
+            return 'invalid_report'
+        if (revision != account['revision'] and
+                store.approved_identity(account['id'], revision) != account['config']['unique_id'].lower()):
+            return 'configuration_changed'
+
+        folder = ledger.root / account['id'] / day
+        try:
+            blocked = prepare_manual_resume(folder, account, revision, now)
+        except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+            return 'invalid_report'
+        if blocked:
+            return blocked
+        # Keep the first approved revision's private input and the original day claim.
+        # The sender rechecks the report immediately before opening a browser.
+        config_path = folder / f".manual-{account['revision']}.env"
+        execute_claimed(store, ledger, account, day, config_path, resume=True, write_snapshot=True)
+
+    return 'completed' if ledger.lookup(account['id'], day)[1] == 'submitted_unverified' else 'partial'
+
+
+def consume_manual_request(store, ledger, protected_ids):
+    request = store.claim_manual_request()
+    if request is None:
+        return
+    try:
+        outcome = run_manual_request(store, ledger, request, protected_ids)
+    except (Exception, KeyboardInterrupt):
+        store.finish_manual_request(request['id'], 'interrupted')
+        raise
+    store.finish_manual_request(request['id'], outcome)
 
 
 def tick(store, ledger, legacy_logs, legacy_hour=9, legacy_minute=0, only=None, resume=False, protected_ids=(), legacy_enabled=True):
@@ -205,6 +316,8 @@ def tick(store, ledger, legacy_logs, legacy_hour=9, legacy_minute=0, only=None, 
             if only:
                 raise ValueError('Another browser task is still running')
             return
+        if not only:
+            consume_manual_request(store, ledger, protected_ids)
         # Read approvals AFTER obtaining the execution lock, not from a stale queue.
         accounts = store.active_accounts()
         if only and not any(a['id'] == only for a in accounts):

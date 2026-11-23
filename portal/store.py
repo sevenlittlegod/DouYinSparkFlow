@@ -1,5 +1,6 @@
 """SQLite snapshots. Secrets stay on disk and never appear in public views."""
 import contextlib
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -24,6 +25,36 @@ class AccessError(ValidationError):
 
 
 ID = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
+BEIJING = timezone(timedelta(hours=8))
+MANUAL_RETRY_SECONDS = 60
+MANUAL_OUTCOMES = {
+    "completed": "今天可安全执行的任务已完成，请查看运行结果。",
+    "already_complete": "今天的任务已提交，无需重复执行。",
+    "no_safe_targets": "今天没有可安全补跑的好友，已提交和结果不确定的好友都会跳过。",
+    "configuration_changed": "原任务与当前账号或好友名单不一致，无法直接补跑。",
+    "invalid_report": "当天运行记录不足，无法确认哪些好友可以安全补跑。",
+    "partial": "本次执行仍有未完成的好友，请查看运行结果。",
+    "interrupted": "上一次手动请求已中断，请重新核对当天运行结果。",
+    "expired": "请求已跨过北京时间当天，请刷新后重新选择。",
+    "unavailable": "本次手动请求未能执行，请检查账号状态。",
+}
+
+
+def manual_day(now):
+    return datetime.fromtimestamp(now, BEIJING).date().isoformat()
+
+
+def submitted_today(raw_summary, day):
+    if not raw_summary:
+        return False
+    summary = json.loads(raw_summary)
+    if summary.get("status") != "submitted_unverified":
+        return False
+    try:
+        stamp = datetime.fromisoformat(summary["started_at"].replace("Z", "+00:00"))
+    except (KeyError, AttributeError, ValueError):
+        return False
+    return stamp.tzinfo is not None and stamp.astimezone(BEIJING).date().isoformat() == day
 
 
 def digest(token):
@@ -172,6 +203,18 @@ class Store:
             CREATE TABLE IF NOT EXISTS sessions (
               token_hash TEXT PRIMARY KEY, role TEXT NOT NULL, account_id TEXT, invite_id TEXT,
               csrf TEXT NOT NULL, expires_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS approved_identities (
+              account_id TEXT NOT NULL REFERENCES accounts(id), revision INTEGER NOT NULL,
+              unique_id TEXT NOT NULL, PRIMARY KEY(account_id,revision));
+            INSERT OR IGNORE INTO approved_identities(account_id,revision,unique_id)
+              SELECT id,active_revision,lower(json_extract(active,'$.unique_id')) FROM accounts
+              WHERE active_revision IS NOT NULL AND json_valid(active)
+                AND json_type(active,'$.unique_id')='text';
+            CREATE TABLE IF NOT EXISTS manual_requests (
+              id INTEGER PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
+              day TEXT NOT NULL, revision INTEGER NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL);
+            CREATE INDEX IF NOT EXISTS manual_account_day ON manual_requests(account_id,day,id);
+            CREATE INDEX IF NOT EXISTS manual_queue ON manual_requests(status,id);
             """)
         os.chmod(self.path, 0o600)
 
@@ -245,6 +288,7 @@ class Store:
                           active=public_config(json.loads(row["active"])) if row["active"] else None,
                           run_status=json.loads(row["run_status"]) if row["run_status"] else None)
             result["invites"] = [dict(i) for i in db.execute("SELECT id,expires_at,revoked FROM invites WHERE account_id=?", (account_id,))]
+            result["manual_run"] = self._manual_state(db, row, int(time.time()))
             return result
 
     def accounts(self):
@@ -270,6 +314,7 @@ class Store:
             revision = row["revision"] + 1
             db.execute("UPDATE accounts SET pending=?,revision=?,updated_at=? WHERE id=?",
                        (json.dumps(config, ensure_ascii=False), revision, int(time.time()), account_id))
+            self._cancel_queued(db, account_id, "configuration_changed")
         return self.account(account_id)
 
     def approve(self, account_id, revision):
@@ -283,12 +328,15 @@ class Store:
                 if json.loads(other["active"])["unique_id"].lower() == unique_id:
                     raise ConflictError("这个抖音号已在其他启用账号中配置，请先停用重复账号。")
             db.execute("UPDATE accounts SET active=pending,active_revision=revision,pending=NULL,enabled=1,updated_at=? WHERE id=?", (int(time.time()), account_id))
+            db.execute("INSERT INTO approved_identities(account_id,revision,unique_id) VALUES (?,?,?)",
+                       (account_id, revision, unique_id))
         return self.account(account_id)
 
     def disable(self, account_id):
         with self.connect() as db:
             if db.execute("UPDATE accounts SET enabled=0,updated_at=? WHERE id=?", (int(time.time()), account_id)).rowcount != 1:
                 raise ValidationError("账号不存在。")
+            self._cancel_queued(db, account_id, "unavailable")
 
     def enable(self, account_id, active_revision):
         with self.connect() as db:
@@ -307,6 +355,95 @@ class Store:
         with self.connect() as db:
             return [{"id": row["id"], "revision": row["active_revision"], "config": json.loads(row["active"])}
                     for row in db.execute("SELECT id,active_revision,active FROM accounts WHERE enabled=1 AND active IS NOT NULL")]
+
+    def approved_identity(self, account_id, revision):
+        with self.connect() as db:
+            row = db.execute("SELECT unique_id FROM approved_identities WHERE account_id=? AND revision=?",
+                             (account_id, revision)).fetchone()
+            return row["unique_id"] if row else None
+
+    @staticmethod
+    def _cancel_queued(db, account_id, status):
+        db.execute("UPDATE manual_requests SET status=?,updated_at=? WHERE account_id=? AND status='queued'",
+                   (status, int(time.time()), account_id))
+
+    @staticmethod
+    def _manual_state(db, account, now):
+        day = manual_day(now)
+        row = db.execute("SELECT id,revision,status,updated_at FROM manual_requests "
+                         "WHERE account_id=? AND day=? ORDER BY id DESC LIMIT 1", (account["id"], day)).fetchone()
+        request = dict(row) if row else None
+        status = request["status"] if request else None
+        same_revision = request is not None and request["revision"] == account["active_revision"]
+        available = False
+        if account["pending"] is not None:
+            reason = "请先由管理员审核并启用最新配置，再手动续火花。"
+        elif not account["enabled"] or account["active_revision"] is None:
+            reason = "请先审核并启用此账号。"
+        elif status == "queued":
+            reason = "请求已排队，等待执行。"
+        elif status == "running":
+            reason = "手动续火花正在执行，请查看运行结果。"
+        elif submitted_today(account["run_status"], day) or status in ("completed", "already_complete"):
+            reason = MANUAL_OUTCOMES["already_complete"]
+        elif same_revision and status in ("no_safe_targets", "configuration_changed"):
+            reason = MANUAL_OUTCOMES[status]
+        elif same_revision and now - request["updated_at"] < MANUAL_RETRY_SECONDS:
+            reason = MANUAL_OUTCOMES[status] + " 请在一分钟后刷新再试。"
+        else:
+            available = True
+            reason = "可立即执行今天的任务；已有运行记录时，仅补跑能确认尚未提交的好友。"
+        return {"day": day, "available": available, "reason": reason, "request": request}
+
+    def request_manual_run(self, account_id, revision, day, previous_request_id, sid):
+        if type(revision) is not int or (previous_request_id is not None and type(previous_request_id) is not int):
+            raise ValidationError("请刷新账号状态后再提交。")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            now = int(time.time())
+            session = db.execute("SELECT role,account_id FROM sessions WHERE token_hash=? AND expires_at>?",
+                                 (digest(sid), now)).fetchone()
+            if not session or (session["role"] != "admin" and session["account_id"] != account_id):
+                raise AccessError("请使用本人有效的账号邀请或管理员登录。")
+            row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+            if not row:
+                raise ValidationError("账号不存在。")
+            state = self._manual_state(db, row, now)
+            if day != state["day"] or revision != row["active_revision"]:
+                raise ConflictError("日期或已批准版本已变化，请刷新后重试。")
+            if row["pending"] is not None or not row["enabled"]:
+                raise ConflictError(state["reason"])
+            latest = state["request"]
+            if not state["available"] or previous_request_id != (latest["id"] if latest else None):
+                return state
+            db.execute("INSERT INTO manual_requests(account_id,day,revision,status,updated_at) VALUES(?,?,?,'queued',?)",
+                       (account_id, day, revision, now))
+            return self._manual_state(db, row, now)
+
+    def claim_manual_request(self):
+        """Call under the shared browser lock, with no request currently executing."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            now = int(time.time())
+            day = manual_day(now)
+            # Ownership of the exclusive lock proves a previous consumer is gone.
+            # Keep its outcome uncertain. Only a new explicit request may re-evaluate it.
+            db.execute("UPDATE manual_requests SET status='interrupted',updated_at=? WHERE status='running'", (now,))
+            db.execute("UPDATE manual_requests SET status='expired',updated_at=? WHERE status='queued' AND day<>?",
+                       (now, day))
+            row = db.execute("SELECT id,account_id,revision,day FROM manual_requests "
+                             "WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
+            if row is None:
+                return None
+            db.execute("UPDATE manual_requests SET status='running',updated_at=? WHERE id=?", (now, row["id"]))
+            return dict(row)
+
+    def finish_manual_request(self, request_id, status):
+        if status not in MANUAL_OUTCOMES:
+            raise ValueError("Unknown manual request status")
+        with self.connect() as db:
+            db.execute("UPDATE manual_requests SET status=?,updated_at=? WHERE id=? AND status='running'",
+                       (status, int(time.time()), request_id))
 
     def update_run_status(self, account_id, summary):
         # Narrow, structured allowlist: never persist arbitrary logs or runner config.

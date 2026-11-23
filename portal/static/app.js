@@ -5,6 +5,8 @@ let session = null;
 let currentAccount = null;
 let setupToken = null;
 let editingAdminAccount = null;
+let ownerDraftChanged = false;
+let updateOwnerManual = null;
 let binding = null, bindingTimer = null;
 let verificationSignature = '';
 let verificationBusy = false;
@@ -59,8 +61,113 @@ function countFriends() {
   $("friend-count").textContent = $("friends").value.split(/\r?\n/).filter(x => x.trim()).length + " 位";
 }
 
+function latestRunText(result) {
+  if (!result) return '';
+  const labels = {submitted_unverified: '消息已提交（送达未验证）', failed: '执行失败或结果待核对',
+    running: '执行中', partial: '部分未完成', success: '完成', worker_failed: '任务执行异常',
+    interrupted: '执行中断', configuration_conflict: '与原有账号重复'};
+  const parts = ['最近执行：' + (labels[result.status] || '结果待核对')];
+  if (Number.isInteger(result.submitted)) {
+    parts.push(`已提交 ${result.submitted}` + (Number.isInteger(result.total) ? ` / ${result.total}` : ''));
+  }
+  if (result.failed) parts.push(`失败 ${result.failed}`);
+  if (result.unknown) parts.push(`结果未知 ${result.unknown}`);
+  if (result.not_attempted) parts.push(`未尝试 ${result.not_attempted}`);
+  const stamp = new Date(result.updated_at || result.started_at);
+  if (!Number.isNaN(stamp.getTime())) parts.push(stamp.toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', hour12: false}) + ' 北京时间');
+  return parts.join(' · ');
+}
+
+function manualControls(account, adminId, inEditor = false) {
+  const accountPath = adminId ? `/admin/accounts/${adminId}` : '/account';
+  const runPath = adminId ? accountPath + '/manual-run' : '/manual-run';
+  const panel = element('section', undefined, 'manual-run');
+  panel.setAttribute('aria-label', '今天的手动续火花');
+  const buttons = element('div', undefined, 'actions');
+  const run = element('button', '手动续火花', 'secondary');
+  const refresh = element('button', '刷新进度', 'quiet');
+  run.type = refresh.type = 'button';
+  const status = element('p', undefined, 'manual-status');
+  const summary = element('p', undefined, 'run-status');
+  status.id = (inEditor ? 'editor-manual-' : 'admin-manual-') + account.id;
+  status.setAttribute('role', 'status');
+  run.setAttribute('aria-describedby', status.id);
+  buttons.append(run, refresh);
+  panel.append(buttons, status, summary);
+
+  let state = account.manual_run;
+  let latest = account.run_status;
+  let revision = account.active_revision;
+  let busy = '';
+  let feedback = '';
+  let needsRefresh = false;
+  let timer;
+
+  function render() {
+    const unsaved = inEditor && (ownerDraftChanged || bindingLive.has(binding?.state) || binding?.state === 'ready');
+    run.disabled = !!busy || !!unsaved || needsRefresh || !state?.available;
+    run.textContent = busy === 'submit' ? '正在提交…' : '手动续火花';
+    refresh.disabled = !!busy;
+    refresh.textContent = busy === 'refresh' ? '正在刷新…' : '刷新进度';
+    const message = feedback || (unsaved ? '请先提交当前配置，待管理员批准后再手动续火花。' : state?.reason);
+    const text = busy === 'submit' ? '正在提交今天的任务…' : (message || '请刷新进度查看今天的状态。');
+    if (status.textContent !== text) status.textContent = text;
+    status.classList.toggle('manual-error', !!feedback);
+    const previous = state?.available && state.request?.status === 'partial' ? '上次手动续火花仍有未完成的好友。' : '';
+    const summaryText = [previous, latestRunText(latest)].filter(Boolean).join(' ');
+    summary.hidden = !summaryText;
+    if (summary.textContent !== summaryText) summary.textContent = summaryText;
+  }
+
+  async function readState() {
+    const fresh = (await api(accountPath)).account;
+    state = fresh.manual_run;
+    latest = fresh.run_status;
+    revision = fresh.active_revision;
+    needsRefresh = false;
+  }
+
+  function schedulePoll() {
+    clearTimeout(timer);
+    if (!['queued', 'running'].includes(state?.request?.status) || feedback) return;
+    timer = setTimeout(() => {
+      if (panel.isConnected && !panel.closest('[hidden]')) refreshState();
+    }, 3500);
+  }
+
+  async function refreshState() {
+    if (busy) return;
+    clearTimeout(timer);
+    busy = 'refresh'; render();
+    try { await readState(); feedback = ''; }
+    catch (error) { needsRefresh = true; feedback = error.message + ' 请刷新进度后再试。'; }
+    finally { busy = ''; render(); schedulePoll(); }
+  }
+
+  refresh.addEventListener('click', refreshState);
+  run.addEventListener('click', async () => {
+    if (run.disabled) return;
+    clearTimeout(timer);
+    busy = 'submit'; feedback = ''; render();
+    try {
+      const result = await api(runPath, {day: state.day, revision, previous_request_id: state.request?.id ?? null});
+      state = result.manual_run;
+    } catch (error) {
+      needsRefresh = true;
+      try {
+        await readState();
+        if (state.available) feedback = error.message;
+      } catch { feedback = '提交状态待确认。请刷新进度后再试。'; }
+    } finally { busy = ''; render(); schedulePoll(); }
+  });
+  if (inEditor) updateOwnerManual = render;
+  render(); schedulePoll();
+  return panel;
+}
+
 function renderOwner(account) {
   currentAccount = account;
+  ownerDraftChanged = false;
   const config = account.pending || account.active;
   $("username").value = config?.username || account.label;
   $("unique-id").value = config?.unique_id || "";
@@ -80,6 +187,7 @@ function renderOwner(account) {
     : account.enabled ? `已启用版本 ${account.active_revision}，每天按设置时间运行。修改后需要重新审核。`
     : account.active ? "账号已停用。可请管理员恢复已批准版本；也可以修改后重新提交审核。" : "尚未提交。完成下面四步后交给管理员审核。";
   countFriends();
+  $('owner-manual').replaceChildren(manualControls(account, editingAdminAccount, true));
   bindingButtons();
 }
 
@@ -89,6 +197,7 @@ function bindingButtons() {
   $('start-binding').disabled = busy || !consent;
   $('read-friends').disabled = busy || !consent || !(currentAccount?.pending || currentAccount?.active)?.cookies_configured;
   $('cancel-binding').hidden = !binding || ![...bindingLive, 'ready'].includes(binding.state);
+  updateOwnerManual?.();
 }
 
 function friendLines() {
@@ -254,11 +363,7 @@ async function renderAdmin() {
       }
     } else if (account.active) card.append(configDetails(account.active));
     else card.append(element("p", "邀请已建立，等待账号本人填写。", "muted"));
-    if (account.run_status) {
-      const result = account.run_status;
-      const labels = {submitted_unverified: "消息已提交（送达未验证）", failed: "执行失败或发送结果待核对", running: "执行中", partial: "部分未完成", success: "完成", worker_failed: "任务未能启动或执行异常", interrupted: "执行中断，请核对后再补跑", configuration_conflict: "与原有账号重复，请停用重复配置"};
-      card.append(element("p", `最近执行：${labels[result.status] || result.status || "暂无"} · 已提交 ${result.submitted ?? "—"} / ${result.total ?? "—"}` + (result.updated_at ? " · " + result.updated_at : ""), "run-status"));
-    }
+    card.append(manualControls(account, account.id));
     const actions = element("div", undefined, "actions");
     const edit = element('a', '编辑 / 重新登录', 'edit-account');
     edit.href = `${base}/admin?account=${account.id}`; actions.append(edit);
@@ -385,6 +490,10 @@ $("copy-invite").addEventListener("click", async () => {
 });
 $("refresh").addEventListener("click", async () => { try { await renderAdmin(); notice("状态已刷新。"); } catch (error) { notice(error.message, true); } });
 $("friends").addEventListener("input", countFriends);
+$('account-form').addEventListener('input', event => {
+  if (!['username', 'unique-id', 'cookies', 'friends', 'message', 'time', 'pushplus', 'clear-push'].includes(event.target.id)) return;
+  ownerDraftChanged = true; updateOwnerManual?.();
+});
 $('binding-consent').addEventListener('change', bindingButtons);
 $('start-binding').addEventListener('click', () => startBinding('qr'));
 $('read-friends').addEventListener('click', () => startBinding('saved'));
@@ -401,6 +510,7 @@ $('apply-friends').addEventListener('click', () => {
   for (const friend of binding.friends) if (!friend.ambiguous && selectedFriends.has(friend.douyin_id)) lines.push(friend.nickname + ' ' + friend.douyin_id);
   if (lines.length > 200) { notice('最多选择 200 位好友，请减少名单。', true); return; }
   $('friends').value = lines.join('\n'); countFriends();
+  ownerDraftChanged = true; updateOwnerManual?.();
   notice('所选好友已填入名单。核对消息与时间后，提交配置等待审核。');
 });
 $("logout").addEventListener("click", async () => {

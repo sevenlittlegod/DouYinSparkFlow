@@ -137,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
             raise AccessError("页面凭据已失效，请刷新。")
 
     def editor_route(self, path):
-        match = re.fullmatch(r'/api/admin/accounts/([0-9a-f]{32})(/binding(?:/.*)?)?', path)
+        match = re.fullmatch(r'/api/admin/accounts/([0-9a-f]{32})(/binding(?:/.*)?|/manual-run)?', path)
         if match:
             self.session(admin=True)
             return match[1], '/api' + (match[2] or '/account')
@@ -213,6 +213,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not editing_account and session["role"] != "owner":
                     raise AccessError("仅可保存本人账号。")
                 return self.finish_response(200, {"account": self.server.store.save(editing_account or session["account_id"], data.get("config"), data.get("revision"), data.get('binding_id'), self.sid())})
+            if path == "/api/manual-run":
+                if not editing_account and session["role"] != "owner":
+                    raise AccessError("请先选择要手动续火花的账号。")
+                state = self.server.store.request_manual_run(editing_account or session["account_id"],
+                    data.get("revision"), data.get("day"), data.get("previous_request_id"), self.sid())
+                return self.finish_response(200, {"manual_run": state})
             if path == '/api/binding/start':
                 return self.finish_response(200, {'binding': self.server.bindings.start(self.sid(), data.get('mode'), data.get('revision'), editing_account)})
             match = re.fullmatch(r'/api/binding/([0-9a-f]{32})/command', path)

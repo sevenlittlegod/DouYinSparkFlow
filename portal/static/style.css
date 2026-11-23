@@ -5,3 +5,9 @@
 .edit-account{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:10px 14px;border:1px solid #38506e;border-radius:9px;background:#17243a;color:var(--text);font-size:14px;font-weight:650;text-decoration:none}.edit-account:hover{background:#213650}
 
 .binding-qr.verification-view{width:100%;height:auto;max-height:640px;object-fit:contain;padding:0;border-radius:8px}#verification-controls{padding:12px 0}#verification-controls .actions button{flex:1}
+
+.manual-run { margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+.manual-run .actions { margin: 0; }
+.manual-status { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+.manual-status.manual-error { color: var(--red); }
+.manual-run button:disabled { cursor: default; }
